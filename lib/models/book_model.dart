@@ -1,8 +1,19 @@
+import 'package:path/path.dart' as p;
+
 class Book {
   final int? id;
+
+  /// The PDF/EPUB filename (e.g. "MyBook.pdf").
+  /// This is the UNIQUE KEY used to reconnect metadata after a restore.
+  /// Never rename your files — this is the permanent identity of a book.
+  final String fileName;
+
   final String title;
   final String author;
   final String genre;
+
+  /// Full absolute path to the file on device storage.
+  /// This may change (e.g. after restore + folder re-scan), but fileName won't.
   final String filePath;
   final String fileType; // pdf, epub, txt, doc
   final String? coverImagePath;
@@ -13,11 +24,12 @@ class Book {
   final DateTime? lastRead;
   final bool isFavorite;
   final String? description;
-  final String? tags; // comma separated tags
+  final String? tags; // comma-separated tags
   final bool isCompleted;
 
   Book({
     this.id,
+    String? fileName,    // optional — derived from filePath if not supplied
     required this.title,
     required this.author,
     required this.genre,
@@ -33,12 +45,14 @@ class Book {
     this.description,
     this.tags,
     this.isCompleted = false,
-  });
+  }) : fileName = fileName ?? p.basename(filePath);
 
-  // Convert Book to Map (for saving to DB)
+  // ─── DB serialization ──────────────────────────────
+
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'fileName': fileName,
       'title': title,
       'author': author,
       'genre': genre,
@@ -57,14 +71,20 @@ class Book {
     };
   }
 
-  // Convert Map to Book (for reading from DB)
   factory Book.fromMap(Map<String, dynamic> map) {
+    final filePath = map['filePath'] as String? ?? '';
+    // If fileName column is missing/empty (old DB row), derive from filePath
+    final storedFileName = map['fileName'] as String?;
+    final fileName = (storedFileName != null && storedFileName.isNotEmpty)
+        ? storedFileName
+        : p.basename(filePath);
     return Book(
       id: map['id'],
+      fileName: fileName,
       title: map['title'],
       author: map['author'],
       genre: map['genre'],
-      filePath: map['filePath'],
+      filePath: filePath,
       fileType: map['fileType'],
       coverImagePath: map['coverImagePath'],
       totalPages: map['totalPages'] ?? 0,
@@ -77,13 +97,16 @@ class Book {
       isFavorite: map['isFavorite'] == 1,
       description: map['description'],
       tags: map['tags'],
-      isCompleted: map['isCompleted'] == 1 || (map['readingProgress'] ?? 0.0) >= 1.0,
+      isCompleted: map['isCompleted'] == 1 ||
+          (map['readingProgress'] ?? 0.0) >= 1.0,
     );
   }
 
-  // CopyWith - to update specific fields
+  // ─── CopyWith ──────────────────────────────────────
+
   Book copyWith({
     int? id,
+    String? fileName,
     String? title,
     String? author,
     String? genre,
@@ -102,6 +125,7 @@ class Book {
   }) {
     return Book(
       id: id ?? this.id,
+      fileName: fileName ?? this.fileName,
       title: title ?? this.title,
       author: author ?? this.author,
       genre: genre ?? this.genre,

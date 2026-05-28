@@ -11,40 +11,50 @@ import '../utils/constants.dart';
 import '../main.dart' show AppColors;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AddBookScreen
+// EditBookScreen
 //
-// Allows adding a single book by picking a file.
-// The file is NOT copied into app storage — the original external path is used.
-// Covers are still extracted/copied into app storage because they are tiny
-// generated thumbnails, not originals.
+// Pre-fills all fields from an existing Book and saves updates back to the DB.
+// The filePath / fileName are never changed — only metadata is edited.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class AddBookScreen extends StatefulWidget {
-  const AddBookScreen({super.key});
+class EditBookScreen extends StatefulWidget {
+  final Book book;
+  const EditBookScreen({super.key, required this.book});
 
   @override
-  State<AddBookScreen> createState() => _AddBookScreenState();
+  State<EditBookScreen> createState() => _EditBookScreenState();
 }
 
-class _AddBookScreenState extends State<AddBookScreen> {
+class _EditBookScreenState extends State<EditBookScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  // Controllers
-  final _titleController = TextEditingController();
-  final _authorController = TextEditingController();
-  final _descriptionController = TextEditingController();
-  final _tagsController = TextEditingController();
+  late final TextEditingController _titleController;
+  late final TextEditingController _authorController;
+  late final TextEditingController _descriptionController;
+  late final TextEditingController _tagsController;
 
-  // State
-  String? _selectedFilePath;  // original path — stored as-is in DB
-  String? _selectedFileName;
-  String? _selectedFileType;
-  String? _coverImagePath;    // user-picked cover (original path, not copied)
+  // Cover: may be replaced by the user; starts with existing coverImagePath
+  String? _coverImagePath;
+  bool _isLoading = false;
 
-  // Multi-genre selection
+  // Genres: pre-filled from existing book
   final Set<String> _selectedGenres = {};
 
-  bool _isLoading = false;
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: widget.book.title);
+    _authorController = TextEditingController(text: widget.book.author);
+    _descriptionController =
+        TextEditingController(text: widget.book.description ?? '');
+    _tagsController = TextEditingController(text: widget.book.tags ?? '');
+    _coverImagePath = widget.book.coverImagePath;
+
+    // Pre-select genres (comma-separated in DB)
+    for (final g in widget.book.genre.split(',').map((e) => e.trim())) {
+      if (g.isNotEmpty) _selectedGenres.add(g);
+    }
+  }
 
   @override
   void dispose() {
@@ -53,39 +63,6 @@ class _AddBookScreenState extends State<AddBookScreen> {
     _descriptionController.dispose();
     _tagsController.dispose();
     super.dispose();
-  }
-
-  // ─── Pick book file ────────────────────────────────────────────────────────
-
-  Future<void> _pickBookFile() async {
-    try {
-      final result = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: AppConstants.supportedExtensions,
-        allowMultiple: false,
-      );
-
-      if (!mounted) return;
-      if (result == null || result.files.isEmpty) return;
-
-      final file = result.files.first;
-      setState(() {
-        _selectedFilePath = file.path;
-        _selectedFileName = file.name;
-        _selectedFileType =
-            path.extension(file.name).replaceAll('.', '').toLowerCase();
-
-        // Auto-fill title from filename
-        if (_titleController.text.isEmpty) {
-          _titleController.text = path
-              .basenameWithoutExtension(file.name)
-              .replaceAll('_', ' ')
-              .replaceAll('-', ' ');
-        }
-      });
-    } catch (e) {
-      if (mounted) _showSnackbar('Error picking file: $e', isError: true);
-    }
   }
 
   // ─── Pick cover image ──────────────────────────────────────────────────────
@@ -98,21 +75,45 @@ class _AddBookScreenState extends State<AddBookScreen> {
       );
       if (!mounted) return;
       if (result == null || result.files.isEmpty) return;
-      setState(() => _coverImagePath = result.files.first.path);
+      // Copy the picked image into app storage
+      final picked = result.files.first.path!;
+      final saved = await _copyCoverToAppStorage(picked);
+      setState(() => _coverImagePath = saved);
     } catch (e) {
       if (mounted) _showSnackbar('Error picking image: $e', isError: true);
     }
   }
 
   // ─── Extract PDF first page as cover ──────────────────────────────────────
-  // Cover thumbnails are small generated images — we store them inside the
-  // app's documents directory since they are not original files.
+
+  Future<void> _extractCoverFromPdf() async {
+    if (widget.book.fileType.toLowerCase() != 'pdf') return;
+    setState(() => _isLoading = true);
+    try {
+      final coverPath =
+          await _extractPdfFirstPageAsCover(widget.book.filePath);
+      if (!mounted) return;
+      setState(() {
+        _coverImagePath = coverPath;
+        _isLoading = false;
+      });
+      if (coverPath != null) {
+        _showSnackbar('Cover extracted from PDF first page!');
+      } else {
+        _showSnackbar('Could not extract cover from PDF', isError: true);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showSnackbar('Error extracting cover: $e', isError: true);
+      }
+    }
+  }
 
   Future<String?> _extractPdfFirstPageAsCover(String pdfPath) async {
     try {
       final doc = await PdfDocument.openFile(pdfPath);
       final page = doc.pages[0];
-
       const targetWidth = 300.0;
       final scale = targetWidth / page.width;
       final targetHeight = page.height * scale;
@@ -122,54 +123,39 @@ class _AddBookScreenState extends State<AddBookScreen> {
         fullHeight: targetHeight,
         backgroundColor: Colors.white,
       );
-
-      if (pageImage == null) {
-        await doc.dispose();
-        return null;
-      }
+      if (pageImage == null) { await doc.dispose(); return null; }
 
       final uiImage = await pageImage.createImage();
-      final byteData =
-          await uiImage.toByteData(format: ui.ImageByteFormat.png);
+      final byteData = await uiImage.toByteData(format: ui.ImageByteFormat.png);
       uiImage.dispose();
       pageImage.dispose();
       await doc.dispose();
-
       if (byteData == null) return null;
 
-      // Save cover thumbnail to app documents (small generated file — safe here)
       final appDir = await getApplicationDocumentsDirectory();
       final coversDir = Directory('${appDir.path}/covers');
-      if (!await coversDir.exists()) {
-        await coversDir.create(recursive: true);
-      }
-      final coverName =
-          'auto_cover_${DateTime.now().millisecondsSinceEpoch}.png';
+      if (!await coversDir.exists()) await coversDir.create(recursive: true);
+      final coverName = 'cover_${DateTime.now().millisecondsSinceEpoch}.png';
       final coverFile = File('${coversDir.path}/$coverName');
       await coverFile.writeAsBytes(byteData.buffer.asUint8List());
-
       return coverFile.path;
     } catch (_) {
-      return null; // silently fail — cover will just be null
+      return null;
     }
   }
-
-  // ─── Copy cover image to app storage ──────────────────────────────────────
-  // A user-picked cover image is copied so we own a persistent reference.
 
   Future<String> _copyCoverToAppStorage(String sourcePath) async {
     final appDir = await getApplicationDocumentsDirectory();
     final coversDir = Directory('${appDir.path}/covers');
-    if (!await coversDir.exists()) {
-      await coversDir.create(recursive: true);
-    }
-    final fileName = path.basename(sourcePath);
+    if (!await coversDir.exists()) await coversDir.create(recursive: true);
+    final fileName =
+        'cover_${DateTime.now().millisecondsSinceEpoch}${path.extension(sourcePath)}';
     final destPath = '${coversDir.path}/$fileName';
     await File(sourcePath).copy(destPath);
     return destPath;
   }
 
-  // ─── Custom genre prompt ───────────────────────────────────────────────────
+  // ─── Genre handling ────────────────────────────────────────────────────────
 
   Future<void> _promptCustomGenre() async {
     final controller = TextEditingController();
@@ -204,10 +190,7 @@ class _AddBookScreenState extends State<AddBookScreen> {
   }
 
   void _toggleGenre(String genre) {
-    if (genre == 'Other') {
-      _promptCustomGenre();
-      return;
-    }
+    if (genre == 'Other') { _promptCustomGenre(); return; }
     setState(() {
       if (_selectedGenres.contains(genre)) {
         _selectedGenres.remove(genre);
@@ -217,46 +200,22 @@ class _AddBookScreenState extends State<AddBookScreen> {
     });
   }
 
-  // ─── Save book ─────────────────────────────────────────────────────────────
+  // ─── Save ──────────────────────────────────────────────────────────────────
 
-  Future<void> _saveBook() async {
+  Future<void> _saveChanges() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedFilePath == null) {
-      _showSnackbar('Please select a book file', isError: true);
-      return;
-    }
     if (_selectedGenres.isEmpty) {
       _showSnackbar('Please select at least one genre', isError: true);
       return;
     }
 
     setState(() => _isLoading = true);
-
     try {
-      // File stays at original path — no copy needed
-      final filePath = _selectedFilePath!;
-
-      // Determine cover
-      String? savedCoverPath;
-      if (_coverImagePath != null) {
-        // User provided a cover — copy it so we own a persistent reference
-        savedCoverPath = await _copyCoverToAppStorage(_coverImagePath!);
-      } else if (_selectedFileType == 'pdf') {
-        // Auto-extract first page of the PDF as cover thumbnail
-        savedCoverPath =
-            await _extractPdfFirstPageAsCover(_selectedFilePath!);
-      }
-
-      final genreString = _selectedGenres.join(', ');
-
-      final book = Book(
+      final updated = widget.book.copyWith(
         title: _titleController.text.trim(),
         author: _authorController.text.trim(),
-        genre: genreString,
-        filePath: filePath,     // original external path
-        fileType: _selectedFileType ?? 'pdf',
-        coverImagePath: savedCoverPath,
-        dateAdded: DateTime.now(),
+        genre: _selectedGenres.join(', '),
+        coverImagePath: _coverImagePath,
         description: _descriptionController.text.trim().isEmpty
             ? null
             : _descriptionController.text.trim(),
@@ -265,21 +224,18 @@ class _AddBookScreenState extends State<AddBookScreen> {
             : _tagsController.text.trim(),
       );
 
-      await DBHelper.instance.insertBook(book);
-
+      await DBHelper.instance.updateBook(updated);
       if (!mounted) return;
-      _showSnackbar('Book added successfully!');
-      await Future.delayed(const Duration(seconds: 1));
+      _showSnackbar('Book updated!');
+      await Future.delayed(const Duration(milliseconds: 800));
       if (!mounted) return;
-      Navigator.pop(context, true);
+      Navigator.pop(context, true); // true = refresh needed
     } catch (e) {
-      if (mounted) _showSnackbar('Error saving book: $e', isError: true);
+      if (mounted) _showSnackbar('Error saving: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
-
-  // ─── Snackbar helper ───────────────────────────────────────────────────────
 
   void _showSnackbar(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -296,14 +252,12 @@ class _AddBookScreenState extends State<AddBookScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         backgroundColor: AppColors.bg,
         title: const Text(
-          'Add New Book',
+          'Edit Book',
           style: TextStyle(
               color: AppColors.textPrimary, fontWeight: FontWeight.bold),
         ),
@@ -318,11 +272,9 @@ class _AddBookScreenState extends State<AddBookScreen> {
                 children: [
                   CircularProgressIndicator(color: AppColors.primary),
                   SizedBox(height: 20),
-                  Text(
-                    'Saving book…',
-                    style:
-                        TextStyle(color: AppColors.textMuted, fontSize: 14),
-                  ),
+                  Text('Saving changes…',
+                      style: TextStyle(
+                          color: AppColors.textMuted, fontSize: 14)),
                 ],
               ),
             )
@@ -333,24 +285,53 @@ class _AddBookScreenState extends State<AddBookScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // ── File Picker ──
-                    _buildSectionTitle('Book File *'),
-                    const SizedBox(height: 8),
-                    _buildFilePicker(theme),
+                    // ── File info (read-only) ──
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface2,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.insert_drive_file_rounded,
+                              color: AppColors.textMuted, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              widget.book.fileName,
+                              style: const TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 12),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              widget.book.fileType.toUpperCase(),
+                              style: const TextStyle(
+                                  color: AppColors.primary,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 24),
 
                     // ── Cover Image ──
                     _buildSectionTitle('Cover Image'),
-                    const SizedBox(height: 4),
-                    Text(
-                      _selectedFileType == 'pdf'
-                          ? 'Optional — leave empty to auto-extract from PDF'
-                          : 'Optional',
-                      style: const TextStyle(
-                          color: AppColors.textMuted, fontSize: 12),
-                    ),
                     const SizedBox(height: 8),
-                    _buildCoverImagePicker(theme),
+                    _buildCoverPicker(),
                     const SizedBox(height: 24),
 
                     // ── Title ──
@@ -379,7 +360,7 @@ class _AddBookScreenState extends State<AddBookScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // ── Genre ──
+                    // ── Genre (multi-select) ──
                     _buildSectionTitle('Genre *'),
                     const SizedBox(height: 4),
                     const Text(
@@ -388,7 +369,7 @@ class _AddBookScreenState extends State<AddBookScreen> {
                           color: AppColors.textMuted, fontSize: 12),
                     ),
                     const SizedBox(height: 8),
-                    _buildGenreChips(theme),
+                    _buildGenreChips(),
                     const SizedBox(height: 16),
 
                     // ── Description ──
@@ -397,8 +378,7 @@ class _AddBookScreenState extends State<AddBookScreen> {
                     TextFormField(
                       controller: _descriptionController,
                       style: const TextStyle(color: AppColors.textPrimary),
-                      decoration:
-                          _inputDecoration('Enter book description'),
+                      decoration: _inputDecoration('Enter book description'),
                       maxLines: 3,
                     ),
                     const SizedBox(height: 16),
@@ -427,10 +407,7 @@ class _AddBookScreenState extends State<AddBookScreen> {
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
-                            colors: [
-                              AppColors.primary,
-                              AppColors.primaryDim
-                            ],
+                            colors: [AppColors.primary, AppColors.primaryDim],
                           ),
                           borderRadius: BorderRadius.circular(16),
                         ),
@@ -442,10 +419,10 @@ class _AddBookScreenState extends State<AddBookScreen> {
                               borderRadius: BorderRadius.circular(16),
                             ),
                           ),
-                          onPressed: _saveBook,
+                          onPressed: _saveChanges,
                           icon: const Icon(Icons.save_rounded),
                           label: const Text(
-                            'Save Book',
+                            'Save Changes',
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold),
@@ -463,172 +440,90 @@ class _AddBookScreenState extends State<AddBookScreen> {
 
   // ─── Sub-widgets ───────────────────────────────────────────────────────────
 
-  Widget _buildSectionTitle(String title) {
-    return Row(
+  Widget _buildCoverPicker() {
+    return Column(
       children: [
-        Container(
-          width: 3,
-          height: 16,
-          decoration: BoxDecoration(
-            color: AppColors.primary,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          title,
-          style: const TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 14,
-            color: AppColors.textPrimary,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFilePicker(ThemeData theme) {
-    return GestureDetector(
-      onTap: _pickBookFile,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: _selectedFilePath != null
-                ? AppColors.primary
-                : AppColors.border,
-            width: 1.5,
-          ),
-          borderRadius: BorderRadius.circular(14),
-          color: _selectedFilePath != null
-              ? AppColors.primary.withValues(alpha: 0.07)
-              : AppColors.surface2,
-        ),
-        child: _selectedFilePath == null
-            ? const Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.upload_file_rounded,
-                      size: 44, color: AppColors.textMuted),
-                  SizedBox(height: 8),
-                  Text('Tap to select book file',
-                      style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontWeight: FontWeight.w600)),
-                  SizedBox(height: 4),
-                  Text(
-                    'PDF, EPUB, DOC, TXT supported',
-                    style:
-                        TextStyle(fontSize: 12, color: AppColors.textMuted),
-                  ),
-                ],
-              )
-            : Row(
-                children: [
-                  Icon(
-                    _getFileIcon(_selectedFileType ?? ''),
-                    color: AppColors.primary,
-                    size: 32,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+        // Cover preview / placeholder
+        GestureDetector(
+          onTap: _pickCoverImage,
+          child: Container(
+            height: 160,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              border: Border.all(color: AppColors.border, width: 1.5),
+              borderRadius: BorderRadius.circular(14),
+              color: AppColors.surface2,
+            ),
+            child: _coverImagePath == null
+                ? const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.add_photo_alternate_outlined,
+                          size: 44, color: AppColors.textMuted),
+                      SizedBox(height: 8),
+                      Text('Tap to pick cover image',
+                          style:
+                              TextStyle(color: AppColors.textSecondary)),
+                    ],
+                  )
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        Text(
-                          _selectedFileName ?? '',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          _selectedFileType?.toUpperCase() ?? '',
-                          style: const TextStyle(
-                            color: AppColors.primary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                        Image.file(File(_coverImagePath!),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                                Icons.broken_image_outlined,
+                                color: AppColors.textMuted)),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: GestureDetector(
+                            onTap: () =>
+                                setState(() => _coverImagePath = null),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(
+                                color: AppColors.red,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.close,
+                                  color: Colors.white, size: 16),
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  IconButton(
-                    onPressed: _pickBookFile,
-                    icon: const Icon(Icons.change_circle_outlined,
-                        color: AppColors.textSecondary),
-                  ),
-                ],
-              ),
-      ),
-    );
-  }
-
-  Widget _buildCoverImagePicker(ThemeData theme) {
-    return GestureDetector(
-      onTap: _pickCoverImage,
-      child: Container(
-        height: 150,
-        width: double.infinity,
-        decoration: BoxDecoration(
-          border: Border.all(color: AppColors.border, width: 1.5),
-          borderRadius: BorderRadius.circular(14),
-          color: AppColors.surface2,
+          ),
         ),
-        child: _coverImagePath == null
-            ? Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.add_photo_alternate_outlined,
-                      size: 44, color: AppColors.textMuted),
-                  const SizedBox(height: 8),
-                  const Text('Tap to add cover image',
-                      style:
-                          TextStyle(color: AppColors.textSecondary)),
-                  const SizedBox(height: 4),
-                  Text(
-                    _selectedFileType == 'pdf'
-                        ? 'Leave empty → auto-extract first PDF page'
-                        : 'Leave empty for default cover',
-                    style: const TextStyle(
-                        fontSize: 11, color: AppColors.textMuted),
-                  ),
-                ],
-              )
-            : ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Image.file(File(_coverImagePath!), fit: BoxFit.cover),
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: GestureDetector(
-                        onTap: () =>
-                            setState(() => _coverImagePath = null),
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                            color: AppColors.red,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.close,
-                              color: Colors.white, size: 16),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+        // Extract from PDF button (only for PDFs)
+        if (widget.book.fileType.toLowerCase() == 'pdf') ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _extractCoverFromPdf,
+              icon: const Icon(Icons.auto_fix_high_rounded,
+                  size: 16, color: AppColors.accent),
+              label: const Text('Auto-extract cover from PDF first page',
+                  style: TextStyle(
+                      color: AppColors.accent, fontSize: 13)),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.accent),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
               ),
-      ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 
-  Widget _buildGenreChips(ThemeData theme) {
+  Widget _buildGenreChips() {
     final genres =
         AppConstants.genres.where((g) => g != 'All').toList();
     final customGenres = _selectedGenres
@@ -667,14 +562,35 @@ class _AddBookScreenState extends State<AddBookScreen> {
             fontSize: 13,
           ),
           side: BorderSide(
-            color:
-                isSelected ? AppColors.primary : AppColors.border,
-          ),
+              color: isSelected ? AppColors.primary : AppColors.border),
           showCheckmark: !isOther,
-          padding:
-              const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         );
       }).toList(),
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Row(
+      children: [
+        Container(
+          width: 3,
+          height: 16,
+          decoration: BoxDecoration(
+            color: AppColors.primary,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+            color: AppColors.textPrimary,
+          ),
+        ),
+      ],
     );
   }
 
@@ -700,21 +616,5 @@ class _AddBookScreenState extends State<AddBookScreen> {
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
     );
-  }
-
-  IconData _getFileIcon(String type) {
-    switch (type) {
-      case 'pdf':
-        return Icons.picture_as_pdf;
-      case 'epub':
-        return Icons.menu_book;
-      case 'doc':
-      case 'docx':
-        return Icons.description;
-      case 'txt':
-        return Icons.text_snippet;
-      default:
-        return Icons.insert_drive_file;
-    }
   }
 }

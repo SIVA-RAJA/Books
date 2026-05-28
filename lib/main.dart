@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'screens/home_screen.dart';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -39,6 +39,24 @@ class AppColors {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // ── Request storage permissions ─────────────────────────────────────────────
+  // MANAGE_EXTERNAL_STORAGE: on Android 11+ (API 30+) this cannot be granted
+  // with a normal dialog — Android silently ignores .request(). We must send
+  // the user to the special "All Files Access" settings screen instead.
+  final manageStatus = await Permission.manageExternalStorage.status;
+  if (!manageStatus.isGranted) {
+    // First try the normal request (works on some vendors/older builds)
+    final result = await Permission.manageExternalStorage.request();
+    if (!result.isGranted) {
+      // If still not granted, open the system settings page for this app
+      await openAppSettings();
+    }
+  }
+  // Legacy READ_EXTERNAL_STORAGE — needed on Android ≤ 12
+  if (await Permission.storage.isDenied) {
+    await Permission.storage.request();
+  }
+
   // Force dark status bar icons & transparent bars
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -55,12 +73,13 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = GoogleFonts.poppinsTextTheme();
+    const poppins = 'Poppins';
 
     final darkTheme = ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: AppColors.bg,
+      fontFamily: poppins,
 
       colorScheme: const ColorScheme.dark(
         brightness: Brightness.dark,
@@ -79,18 +98,12 @@ class MyApp extends StatelessWidget {
         onSecondaryContainer: AppColors.accent,
       ),
 
-      textTheme: GoogleFonts.poppinsTextTheme(base).copyWith(
-        bodyLarge: GoogleFonts.poppins(color: AppColors.textPrimary),
-        bodyMedium: GoogleFonts.poppins(color: AppColors.textSecondary),
-        bodySmall: GoogleFonts.poppins(color: AppColors.textMuted),
-        titleLarge: GoogleFonts.poppins(
-          color: AppColors.textPrimary,
-          fontWeight: FontWeight.bold,
-        ),
-        titleMedium: GoogleFonts.poppins(
-          color: AppColors.textPrimary,
-          fontWeight: FontWeight.w600,
-        ),
+      textTheme: const TextTheme(
+        bodyLarge:   TextStyle(color: AppColors.textPrimary,   fontFamily: poppins),
+        bodyMedium:  TextStyle(color: AppColors.textSecondary, fontFamily: poppins),
+        bodySmall:   TextStyle(color: AppColors.textMuted,     fontFamily: poppins),
+        titleLarge:  TextStyle(color: AppColors.textPrimary,   fontFamily: poppins, fontWeight: FontWeight.bold),
+        titleMedium: TextStyle(color: AppColors.textPrimary,   fontFamily: poppins, fontWeight: FontWeight.w600),
       ),
 
       // AppBar

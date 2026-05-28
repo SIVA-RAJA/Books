@@ -48,5 +48,9 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Required for permission_handler to open All Files Access settings on Android 11+ -->
+        <intent>
+            <action android:name="android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION"/>
+        </intent>
     </queries>
 </manifest>

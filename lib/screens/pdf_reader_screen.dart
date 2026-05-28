@@ -25,7 +25,7 @@ class PdfReaderScreen extends StatefulWidget {
 }
 
 class _PdfReaderScreenState extends State<PdfReaderScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // ── PDF document ──────────────────────────────────────────────
   PdfDocument? _document;
   bool _isLoading = true;
@@ -34,11 +34,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   // ── Page state ────────────────────────────────────────────────
   int _currentPage = 1;
   int _totalPages = 0;
-
-  // Per-page text cache: page# → extracted text ('' = image-only page)
-  final Map<int, String> _textCache = {};
-  // Track active extraction tasks to prevent redundant Future creation
-  final Map<int, Future<String>> _extractionTasks = {};
 
   // ── Scroll ────────────────────────────────────────────────────
   final ItemScrollController _itemScrollController = ItemScrollController();
@@ -57,9 +52,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   // Debounce: last page we actually wrote to DB
   int _lastSavedPage = 0;
 
+  // ── Stats Tracking ────────────────────────────────────────────
+  DateTime _sessionStart = DateTime.now();
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _sessionStart = DateTime.now();
+
     _currentPage  = widget.book.currentPage > 0 ? widget.book.currentPage : 1;
     _lastSavedPage = _currentPage;
 
@@ -78,6 +79,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   @override
   void dispose() {
+    _recordReadingTime();
+    WidgetsBinding.instance.removeObserver(this);
     _saveProgress(_currentPage); // always save on exit
     _itemPositionsListener.itemPositions.removeListener(_onScroll);
     _controlsAnim.dispose();
@@ -86,11 +89,27 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _recordReadingTime();
+    } else if (state == AppLifecycleState.resumed) {
+      _sessionStart = DateTime.now();
+    }
+  }
+
+  void _recordReadingTime() {
+    final now = DateTime.now();
+    final seconds = now.difference(_sessionStart).inSeconds;
+    if (seconds > 0) {
+      DBHelper.instance.addReadingTime(seconds);
+    }
+    _sessionStart = now; // reset
+  }
+
   // ── Load PDF ──────────────────────────────────────────────────
 
   Future<void> _loadDocument() async {
-    // Add small delay to let navigation transition finish smoothly
-    await Future.delayed(const Duration(milliseconds: 300));
     try {
       final doc = await PdfDocument.openFile(widget.book.filePath);
       if (!mounted) return;
@@ -114,46 +133,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     }
   }
 
-  // ── Text extraction ───────────────────────────────────────────
-
-  Future<String> _extractPageText(int pageNumber) {
-    if (_textCache.containsKey(pageNumber)) {
-      return Future.value(_textCache[pageNumber]!);
-    }
-    if (_extractionTasks.containsKey(pageNumber)) {
-      return _extractionTasks[pageNumber]!;
-    }
-
-    final task = () async {
-      if (_document == null) return '';
-      try {
-        final blocks = await _document!.pages[pageNumber - 1].loadText();
-        final buf = StringBuffer();
-        String prev = '';
-        for (final frag in blocks.fragments) {
-          final t = frag.text.trim();
-          if (t.isEmpty) continue;
-          if (prev.endsWith('.') || prev.endsWith('?') || prev.endsWith('!')) {
-            buf.write('\n\n');
-          } else if (buf.isNotEmpty) {
-            buf.write(' ');
-          }
-          buf.write(t);
-          prev = t;
-        }
-        final result = buf.toString().trim();
-        _textCache[pageNumber] = result;
-        return result;
-      } catch (_) {
-        _textCache[pageNumber] = '';
-        return '';
-      }
-    }();
-
-    _extractionTasks[pageNumber] = task;
-    return task;
-  }
-
   // ── Scroll listener → instant page detection ──────────────────
 
   void _onScroll() {
@@ -162,8 +141,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     final positions = _itemPositionsListener.itemPositions.value;
     if (positions.isEmpty) return;
 
-    // Find the item that is currently occupying the middle of the screen
-    // An item's leading edge is < 0.5 and trailing edge is > 0.5
     int? bestPage;
 
     for (final pos in positions) {
@@ -173,7 +150,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       }
     }
 
-    // Fallback: finding the first visible item if none strictly covers the middle
     if (bestPage == null) {
       double minEdge = double.infinity;
       for (final pos in positions) {
@@ -208,9 +184,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   void _jumpToPage(int page, {bool animate = true}) {
     if (page < 1 || page > _totalPages) return;
 
-    // Only animate if the distance is short. Animating a long jump in a
-    // ScrollablePositionedList forces it to build all intermediate items,
-    // which freezes the app.
     final isShortJump = (_currentPage - page).abs() <= 3;
 
     if (animate && isShortJump) {
@@ -389,19 +362,12 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   // ── Single page widget ────────────────────────────────────────
 
   Widget _buildPage(int pageNum) {
-    return FutureBuilder<String>(
-      future: _extractPageText(pageNum),
-      builder: (context, snap) {
-        // Show a shimmer/loading while text is being extracted
-        if (snap.connectionState == ConnectionState.waiting &&
-            !_textCache.containsKey(pageNum)) {
-          return _buildPageShimmer();
-        }
-        final text = snap.data ?? _textCache[pageNum] ?? '';
-        return text.isNotEmpty
-            ? _buildTextPage(pageNum, text)
-            : _buildImagePage(pageNum);
-      },
+    return _PdfPageWidget(
+      pageNum: pageNum,
+      document: _document,
+      buildTextPage: _buildTextPage,
+      buildImagePage: _buildImagePage,
+      shimmer: _buildPageShimmer(),
     );
   }
 
@@ -414,7 +380,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Subtle page divider line at top (not first page)
           if (pageNum > 1) ...[
             Container(
               height: 1,
@@ -431,7 +396,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             const SizedBox(height: 16),
           ],
 
-          // Page number pill
           Center(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
@@ -454,8 +418,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           ),
           const SizedBox(height: 20),
 
-          // Book text
-          SelectableText(
+          Text(
             text,
             style: TextStyle(
               color: _textColor,
@@ -572,7 +535,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           height: 56,
           child: Row(
             children: [
-              // ← Back to book detail (not prev page!)
               IconButton(
                 icon: const Icon(Icons.arrow_back_ios_new_rounded,
                     color: Colors.white, size: 20),
@@ -601,7 +563,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                   ],
                 ),
               ),
-              // Font controls
               IconButton(
                 icon: const Icon(Icons.text_decrease_rounded,
                     color: Colors.white70, size: 18),
@@ -616,7 +577,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 onPressed: () => setState(
                     () => _fontSize = (_fontSize + 1).clamp(12.0, 28.0)),
               ),
-              // Jump to page
               IconButton(
                 icon: const Icon(Icons.find_in_page_outlined,
                     color: Colors.white70, size: 20),
@@ -652,7 +612,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Progress slider
             SliderTheme(
               data: const SliderThemeData(
                 thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
@@ -668,14 +627,12 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     : 1.0,
                 min: 1,
                 max: _totalPages > 0 ? _totalPages.toDouble() : 1.0,
-                // Dragging = instant visual update + save
                 onChanged: (v) {
                   final p = v.round();
                   if (_currentPage != p) {
                     setState(() => _currentPage = p);
                   }
                 },
-                // Released = actually scroll there + save
                 onChangeEnd: (v) => _jumpToPage(v.round(), animate: false),
               ),
             ),
@@ -683,11 +640,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Prev page
                 _navBtn(Icons.chevron_left_rounded,
                     () => _jumpToPage(_currentPage - 1),
                     enabled: _currentPage > 1),
-                // Page info
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -705,7 +660,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     ),
                   ],
                 ),
-                // Next page
                 _navBtn(Icons.chevron_right_rounded,
                     () => _jumpToPage(_currentPage + 1),
                     enabled: _currentPage < _totalPages),
@@ -741,5 +695,88 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         ),
       ),
     );
+  }
+}
+
+// ── KeepAlive Page Wrapper ───────────────────────────────────────────────────
+
+class _PdfPageWidget extends StatefulWidget {
+  final int pageNum;
+  final PdfDocument? document;
+  final Widget Function(int, String) buildTextPage;
+  final Widget Function(int) buildImagePage;
+  final Widget shimmer;
+
+  const _PdfPageWidget({
+    required this.pageNum,
+    required this.document,
+    required this.buildTextPage,
+    required this.buildImagePage,
+    required this.shimmer,
+  });
+
+  @override
+  State<_PdfPageWidget> createState() => _PdfPageWidgetState();
+}
+
+class _PdfPageWidgetState extends State<_PdfPageWidget>
+    with AutomaticKeepAliveClientMixin {
+  String? _text;
+  bool _isLoading = true;
+
+  @override
+  bool get wantKeepAlive => true; // Prevents the list from destroying this page!
+
+  @override
+  void initState() {
+    super.initState();
+    _extractText();
+  }
+
+  Future<void> _extractText() async {
+    if (widget.document == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+    try {
+      final blocks = await widget.document!.pages[widget.pageNum - 1].loadText();
+      final buf = StringBuffer();
+      String prev = '';
+      for (final frag in blocks.fragments) {
+        final t = frag.text.trim();
+        if (t.isEmpty) continue;
+        if (prev.endsWith('.') || prev.endsWith('?') || prev.endsWith('!')) {
+          buf.write('\n\n');
+        } else if (buf.isNotEmpty) {
+          buf.write(' ');
+        }
+        buf.write(t);
+        prev = t;
+      }
+      if (mounted) {
+        setState(() {
+          _text = buf.toString().trim();
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _text = '';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    if (_isLoading) return widget.shimmer;
+    if (_text != null && _text!.isNotEmpty) {
+      return widget.buildTextPage(widget.pageNum, _text!);
+    } else {
+      return widget.buildImagePage(widget.pageNum);
+    }
   }
 }

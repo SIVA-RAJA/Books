@@ -1,7 +1,7 @@
 name: books
 description: Personal Ebook Organizer
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+10
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -31,9 +31,9 @@ dependencies:
 
   # UI
   flutter_staggered_grid_view: ^0.7.0
-  cached_network_image: ^3.3.1
-  google_fonts: ^8.1.0
-  lottie: ^3.0.0
+
+  # Permissions (needed for MANAGE_EXTERNAL_STORAGE on Android 11+)
+  permission_handler: ^11.3.1
 
   # Utils
   share_plus: ^12.0.2
@@ -53,6 +53,16 @@ flutter:
   assets:
     - assets/images/
     - assets/animations/
+  fonts:
+    - family: Poppins
+      fonts:
+        - asset: assets/fonts/Poppins-Regular.ttf
+        - asset: assets/fonts/Poppins-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Poppins-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Poppins-Bold.ttf
+          weight: 700
 
 flutter_icons:
   android: "launcher_icon"

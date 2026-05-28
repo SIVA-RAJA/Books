@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import '../database/db_helper.dart';
 import '../models/book_model.dart';
+import '../services/backup_restore_service.dart';
 import '../utils/constants.dart';
 import '../utils/page_transitions.dart';
-import 'add_book_screen.dart';
+import 'edit_book_screen.dart';
 import 'book_detail_screen.dart';
 import '../widgets/book_card.dart';
 import '../widgets/filter_bottom_sheet.dart';
@@ -26,9 +28,20 @@ class _HomeScreenState extends State<HomeScreen>
   bool _isLoading = true;
   bool _isGridView = true;
   String _selectedGenre = 'All';
-  String _selectedSort = 'Recently Added';
+  String _selectedSort = 'Last Read';
   String _searchQuery = '';
   int _currentNavIndex = 0;
+
+  // Stats
+  int _currentStreak = 0;
+  int _longestStreak = 0;
+  int _totalReadingSeconds = 0;
+
+  /// Path to the folder the user has selected as their library folder.
+  /// Persisted in-memory only — for a real app, store in shared_preferences.
+  String? _libraryFolderPath;
+
+  final _backupService = BackupRestoreService();
 
   // Controllers
   final _searchController = TextEditingController();
@@ -65,8 +78,51 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() => _isLoading = true);
     try {
       final books = await DBHelper.instance.getSortedBooks(_selectedSort);
+      final stats = await DBHelper.instance.getDailyStats();
+      
+      int currentStreak = 0;
+      int longestStreak = 0;
+      int totalSeconds = 0;
+      DateTime? lastDate;
+
+      for (final s in stats) {
+        final dateStr = s['date'] as String;
+        final secs = s['secondsRead'] as int;
+        totalSeconds += secs;
+
+        final parts = dateStr.split('-');
+        final dt = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+
+        if (lastDate == null) {
+          currentStreak = 1;
+        } else {
+          final diff = dt.difference(lastDate).inDays;
+          if (diff == 1) {
+            currentStreak++;
+          } else if (diff > 1) {
+            if (currentStreak > longestStreak) longestStreak = currentStreak;
+            currentStreak = 1;
+          }
+        }
+        lastDate = dt;
+      }
+      if (currentStreak > longestStreak) longestStreak = currentStreak;
+
+      // Reset streak if we missed yesterday and today
+      if (lastDate != null) {
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final diff = today.difference(lastDate).inDays;
+        if (diff > 1) {
+          currentStreak = 0;
+        }
+      }
+
       setState(() {
         _allBooks = books;
+        _currentStreak = currentStreak;
+        _longestStreak = longestStreak;
+        _totalReadingSeconds = totalSeconds;
         _isLoading = false;
       });
       _applyFilters();
@@ -108,17 +164,6 @@ class _HomeScreenState extends State<HomeScreen>
     _applyFilters();
   }
 
-  // ─── Navigate to Add Book ─────────────────────────────
-
-  Future<void> _goToAddBook() async {
-    HapticFeedback.lightImpact();
-    final result = await Navigator.push(
-      context,
-      AppRoutes.slideUp(const AddBookScreen()),
-    );
-    if (result == true) _loadBooks();
-  }
-
   // ─── Navigate to Book Detail ──────────────────────────
 
   void _goToBookDetail(Book book) async {
@@ -128,6 +173,17 @@ class _HomeScreenState extends State<HomeScreen>
       AppRoutes.scaleUp(BookDetailScreen(book: book)),
     );
     _loadBooks(); // Refresh after reading
+  }
+
+  // ─── Navigate to Edit Book ────────────────────────────
+
+  Future<void> _goToEditBook(Book book) async {
+    HapticFeedback.lightImpact();
+    final result = await Navigator.push(
+      context,
+      AppRoutes.slideUp(EditBookScreen(book: book)),
+    );
+    if (result == true) _loadBooks();
   }
 
   // ─── Show Sort/Filter Bottom Sheet ───────────────────
@@ -156,7 +212,7 @@ class _HomeScreenState extends State<HomeScreen>
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delete Book'),
-        content: Text('Are you sure you want to delete "${book.title}"?'),
+        content: Text('Are you sure you want to delete "${book.title}" from the library? (The file on your phone is NOT deleted.)'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -165,18 +221,17 @@ class _HomeScreenState extends State<HomeScreen>
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
+            child: const Text('Remove'),
           ),
         ],
       ),
     );
 
     if (confirm == true) {
+      // Only delete the DB row — the file lives on external storage, keep it.
       await DBHelper.instance.deleteBook(book.id!);
-      // Also delete file from storage
+      // Only remove the generated cover thumbnail (not the original file).
       try {
-        final file = File(book.filePath);
-        if (await file.exists()) await file.delete();
         if (book.coverImagePath != null) {
           final cover = File(book.coverImagePath!);
           if (await cover.exists()) await cover.delete();
@@ -186,12 +241,139 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
+  // ─── Library Folder ───────────────────────────────────
+
+  /// Let the user pick a folder on external storage, then scan it.
+  Future<void> _selectAndScanFolder() async {
+    try {
+      // file_picker can pick a directory on Android
+      final result = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Select your PDF library folder',
+      );
+      if (!mounted || result == null) return;
+
+      setState(() => _isLoading = true);
+
+      _libraryFolderPath = result;
+      final scanResult = await _backupService.scanLibraryFolder(result);
+
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _loadBooks();
+
+      _showSnackbar(
+        'Scan complete: ${scanResult.added} new book${scanResult.added == 1 ? '' : 's'} added, '
+        '${scanResult.updated} file path${scanResult.updated == 1 ? '' : 's'} updated.',
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showSnackbar('Error scanning folder: $e', isError: true);
+      }
+    }
+  }
+
+  // ─── Backup ───────────────────────────────────────────
+
+  Future<void> _backupDatabase() async {
+    try {
+      setState(() => _isLoading = true);
+      final dest = await _backupService.backup();
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showSnackbar('Backup saved to $dest');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showSnackbar('Backup failed: $e', isError: true);
+      }
+    }
+  }
+
+  // ─── Restore ──────────────────────────────────────────
+
+  Future<void> _restoreDatabase() async {
+    // Check that a backup exists first
+    final exists = await _backupService.backupExists;
+    if (!exists) {
+      _showSnackbar('No backup found at /storage/emulated/0/MyLibrary/backup.db', isError: true);
+      return;
+    }
+
+    final lastMod = await _backupService.backupLastModified;
+    final modStr = lastMod != null
+        ? '${lastMod.day}/${lastMod.month}/${lastMod.year} ${lastMod.hour}:${lastMod.minute.toString().padLeft(2, '0')}'
+        : 'unknown date';
+
+    if (!mounted) return; // guard after async gap
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surface2,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Restore Backup?',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: Text(
+          'This will replace your current library metadata with the backup from $modStr.\n\nYour PDF files are untouched.',
+          style: const TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    try {
+      setState(() => _isLoading = true);
+      final processed =
+          await _backupService.restore(libraryFolderPath: _libraryFolderPath);
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _loadBooks();
+      _showSnackbar(
+          'Restore complete! $processed book${processed == 1 ? '' : 's'} synced.');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showSnackbar('Restore failed: $e', isError: true);
+      }
+    }
+  }
+
+  // ─── Snackbar helper ──────────────────────────────────
+
+  void _showSnackbar(String msg, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? AppColors.red : AppColors.green,
+        behavior: SnackBarBehavior.floating,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
   // ─── Currently Reading Section ────────────────────────
 
   Widget _buildCurrentlyReading() {
     final reading = _allBooks
         .where((b) => b.readingProgress > 0 && b.readingProgress < 1)
         .toList();
+    reading.sort((a, b) => (b.lastRead ?? DateTime.fromMillisecondsSinceEpoch(0))
+        .compareTo(a.lastRead ?? DateTime.fromMillisecondsSinceEpoch(0)));
 
     if (reading.isEmpty) return const SizedBox.shrink();
 
@@ -230,7 +412,7 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ),
         SizedBox(
-          height: 84,
+          height: 96,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -241,8 +423,8 @@ class _HomeScreenState extends State<HomeScreen>
                 onTap: () => _goToBookDetail(book),
                 child: Container(
                   width: 260,
-                  margin: const EdgeInsets.symmetric(horizontal: 5),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  margin: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(12),
                     color: AppColors.surface2,
@@ -256,30 +438,21 @@ class _HomeScreenState extends State<HomeScreen>
                     ],
                   ),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Cover
+                      // Cover — safe: errorBuilder shows placeholder, no raw error text
                       ClipRRect(
                         borderRadius: BorderRadius.circular(7),
                         child: book.coverImagePath != null
                             ? Image.file(
                                 File(book.coverImagePath!),
-                                width: 48,
-                                height: 64,
+                                width: 52,
+                                height: 76,
                                 fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    _continueReadingPlaceholder(book),
                               )
-                            : Container(
-                                width: 48,
-                                height: 64,
-                                decoration: const BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [AppColors.primary, AppColors.primaryDim],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                  ),
-                                ),
-                                child: const Icon(Icons.auto_stories_rounded,
-                                    color: Colors.white54, size: 22),
-                              ),
+                            : _continueReadingPlaceholder(book),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -354,6 +527,33 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  /// Gradient placeholder for the Continue Reading cards.
+  /// Shows an icon, never any error text — so it can never overflow.
+  Widget _continueReadingPlaceholder(Book book) {
+    const gradients = [
+      [Color(0xFF7C6FFF), Color(0xFF3B1F99)],
+      [Color(0xFFFF4D6D), Color(0xFF991F3B)],
+      [Color(0xFF00D2FF), Color(0xFF004D7A)],
+      [Color(0xFFFF9100), Color(0xFF7A3E00)],
+      [Color(0xFF00E676), Color(0xFF005C30)],
+    ];
+    final idx = book.title.length % gradients.length;
+    final cols = gradients[idx];
+    return Container(
+      width: 52,
+      height: 76,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [cols[0], cols[1]],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: const Icon(Icons.auto_stories_rounded,
+          color: Colors.white54, size: 20),
+    );
+  }
+
   // ─── Empty State ──────────────────────────────────────
 
   Widget _buildEmptyState() {
@@ -395,52 +595,67 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ─── Books Grid / List ────────────────────────────────
 
-  Widget _buildBooksView() {
-    if (_filteredBooks.isEmpty) return _buildEmptyState();
+  Widget _buildBooksSliver() {
+    if (_filteredBooks.isEmpty) {
+      return SliverFillRemaining(
+        hasScrollBody: false,
+        child: _buildEmptyState(),
+      );
+    }
 
     if (_isGridView) {
-      return GridView.builder(
+      return SliverPadding(
         padding: const EdgeInsets.all(12),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          childAspectRatio: 0.52,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-        ),
-        itemCount: _filteredBooks.length,
-        itemBuilder: (context, index) {
-          final book = _filteredBooks[index];
-          return BookCard(
-            book: book,
-            isGridView: true,
-            onTap: () => _goToBookDetail(book),
-            onDelete: () => _deleteBook(book),
-            onFavoriteToggle: () async {
-              await DBHelper.instance
-                  .toggleFavorite(book.id!, !book.isFavorite);
-              _loadBooks();
+        sliver: SliverGrid(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            childAspectRatio: 0.52,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              final book = _filteredBooks[index];
+              return BookCard(
+                book: book,
+                isGridView: true,
+                onTap: () => _goToBookDetail(book),
+                onDelete: () => _deleteBook(book),
+                onEdit: () => _goToEditBook(book),
+                onFavoriteToggle: () async {
+                  await DBHelper.instance
+                      .toggleFavorite(book.id!, !book.isFavorite);
+                  _loadBooks();
+                },
+              );
             },
-          );
-        },
+            childCount: _filteredBooks.length,
+          ),
+        ),
       );
     } else {
-      return ListView.builder(
+      return SliverPadding(
         padding: const EdgeInsets.all(12),
-        itemCount: _filteredBooks.length,
-        itemBuilder: (context, index) {
-          final book = _filteredBooks[index];
-          return BookCard(
-            book: book,
-            isGridView: false,
-            onTap: () => _goToBookDetail(book),
-            onDelete: () => _deleteBook(book),
-            onFavoriteToggle: () async {
-              await DBHelper.instance
-                  .toggleFavorite(book.id!, !book.isFavorite);
-              _loadBooks();
+        sliver: SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              final book = _filteredBooks[index];
+              return BookCard(
+                book: book,
+                isGridView: false,
+                onTap: () => _goToBookDetail(book),
+                onDelete: () => _deleteBook(book),
+                onEdit: () => _goToEditBook(book),
+                onFavoriteToggle: () async {
+                  await DBHelper.instance
+                      .toggleFavorite(book.id!, !book.isFavorite);
+                  _loadBooks();
+                },
+              );
             },
-          );
-        },
+            childCount: _filteredBooks.length,
+          ),
+        ),
       );
     }
   }
@@ -448,89 +663,109 @@ class _HomeScreenState extends State<HomeScreen>
   // ─── Nav Pages ────────────────────────────────────────
 
   Widget _buildLibraryPage() {
-    return Column(
-      children: [
-        // Search Bar
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: SearchBar(
-            controller: _searchController,
-            hintText: 'Search books, authors, tags...',
-            leading: const Icon(Icons.search_rounded, color: AppColors.textMuted),
-            trailing: [
-              if (_searchQuery.isNotEmpty)
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
-                  onPressed: () {
-                    _searchController.clear();
-                    _onSearchChanged('');
-                  },
-                ),
-            ],
-            onChanged: _onSearchChanged,
-            padding: const WidgetStatePropertyAll(
-              EdgeInsets.symmetric(horizontal: 16),
+    return CustomScrollView(
+      slivers: [
+        // Search and Tabs pinned to the top
+        SliverAppBar(
+          pinned: true,
+          floating: false,
+          backgroundColor: AppColors.bg,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          automaticallyImplyLeading: false,
+          titleSpacing: 0,
+          toolbarHeight: 72,
+          title: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: SearchBar(
+              controller: _searchController,
+              hintText: 'Search books, authors, tags...',
+              leading: const Icon(Icons.search_rounded, color: AppColors.textMuted),
+              trailing: [
+                if (_searchQuery.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
+                    onPressed: () {
+                      _searchController.clear();
+                      _onSearchChanged('');
+                    },
+                  ),
+              ],
+              onChanged: _onSearchChanged,
+              padding: const WidgetStatePropertyAll(
+                EdgeInsets.symmetric(horizontal: 16),
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 8),
-
-        // Genre Tabs
-        TabBar(
-          controller: _tabController,
-          isScrollable: true,
-          tabAlignment: TabAlignment.start,
-          tabs: AppConstants.genres.map((g) => Tab(text: g)).toList(),
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          bottom: TabBar(
+            controller: _tabController,
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            tabs: AppConstants.genres.map((g) => Tab(text: g)).toList(),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            dividerColor: Colors.transparent,
+          ),
         ),
 
-        // Currently Reading
-        if (_searchQuery.isEmpty && _selectedGenre == 'All')
-          _buildCurrentlyReading(),
-
-        // Sort & View Toggle Bar
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
-          child: Row(
+        // Scrollable content below the pinned app bar
+        SliverToBoxAdapter(
+          child: Column(
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.surface2,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.border),
+
+              // Currently Reading
+              if (_searchQuery.isEmpty && _selectedGenre == 'All')
+                _buildCurrentlyReading(),
+
+              // Sort & View Toggle Bar
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface2,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Text(
+                        '${_filteredBooks.length} books',
+                        style: const TextStyle(
+                            color: AppColors.textSecondary, fontSize: 12),
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: _showFilterSheet,
+                      icon: const Icon(Icons.tune_rounded, size: 16),
+                      label: Text(_selectedSort, style: const TextStyle(fontSize: 12)),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        _isGridView ? Icons.view_list_rounded : Icons.grid_view_rounded,
+                        color: AppColors.textSecondary,
+                        size: 20,
+                      ),
+                      onPressed: () => setState(() => _isGridView = !_isGridView),
+                    ),
+                  ],
                 ),
-                child: Text(
-                  '${_filteredBooks.length} books',
-                  style: const TextStyle(
-                      color: AppColors.textSecondary, fontSize: 12),
-                ),
-              ),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: _showFilterSheet,
-                icon: const Icon(Icons.tune_rounded, size: 16),
-                label: Text(_selectedSort, style: const TextStyle(fontSize: 12)),
-              ),
-              IconButton(
-                icon: Icon(
-                  _isGridView ? Icons.view_list_rounded : Icons.grid_view_rounded,
-                  color: AppColors.textSecondary,
-                  size: 20,
-                ),
-                onPressed: () => setState(() => _isGridView = !_isGridView),
               ),
             ],
           ),
         ),
 
         // Books
-        Expanded(
-          child: _isLoading
-              ? const Center(
-                  child: CircularProgressIndicator(color: AppColors.primary))
-              : _buildBooksView(),
-        ),
+        if (_isLoading)
+          const SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(
+              child: CircularProgressIndicator(color: AppColors.primary),
+            ),
+          )
+        else
+          _buildBooksSliver(),
       ],
     );
   }
@@ -587,6 +822,7 @@ class _HomeScreenState extends State<HomeScreen>
           isGridView: true,
           onTap: () => _goToBookDetail(book),
           onDelete: () => _deleteBook(book),
+          onEdit: () => _goToEditBook(book),
           onFavoriteToggle: () async {
             await DBHelper.instance
                 .toggleFavorite(book.id!, !book.isFavorite);
@@ -826,6 +1062,45 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           const SizedBox(height: 12),
 
+          // ── Streaks & Time Row ──
+          Row(
+            children: [
+              _quickStatCard(
+                icon: Icons.local_fire_department_rounded,
+                label: 'Current Streak',
+                value: '$_currentStreak d',
+                color: Colors.deepOrange,
+                cardColor: cardColor,
+                borderColor: borderColor,
+              ),
+              const SizedBox(width: 10),
+              _quickStatCard(
+                icon: Icons.emoji_events_rounded,
+                label: 'Best Streak',
+                value: '$_longestStreak d',
+                color: Colors.amber,
+                cardColor: cardColor,
+                borderColor: borderColor,
+              ),
+              const SizedBox(width: 10),
+              _quickStatCard(
+                icon: Icons.timer_rounded,
+                label: 'Time Spent',
+                value: _totalReadingSeconds >= 3600
+                    ? '${(_totalReadingSeconds ~/ 3600)}h ${(_totalReadingSeconds % 3600) ~/ 60}m'
+                    : _totalReadingSeconds > 60
+                        ? '${_totalReadingSeconds ~/ 60}m'
+                        : _totalReadingSeconds > 0
+                            ? '< 1m'
+                            : '0m',
+                color: Colors.blueAccent,
+                cardColor: cardColor,
+                borderColor: borderColor,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
           // ── Top Genres ──
           if (topGenres.isNotEmpty) ...[
             _buildSection(
@@ -921,67 +1196,6 @@ class _HomeScreenState extends State<HomeScreen>
             const SizedBox(height: 12),
           ],
 
-          // ── File Format Breakdown ──
-          if (typeCounts.isNotEmpty) ...[
-            _buildSection(
-              cardColor: cardColor,
-              borderColor: borderColor,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _sectionHeader(
-                    icon: Icons.insert_drive_file_rounded,
-                    title: 'File Formats',
-                    color: const Color(0xFF00BCD4),
-                  ),
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: typeCounts.entries.map((e) {
-                      final typeColors = {
-                        'PDF': const Color(0xFFE53935),
-                        'EPUB': const Color(0xFF6C63FF),
-                        'TXT': const Color(0xFF4CAF50),
-                        'DOC': const Color(0xFF2196F3),
-                        'DOCX': const Color(0xFF1976D2),
-                      };
-                      final c = typeColors[e.key] ??
-                          const Color(0xFF9E9E9E);
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: c.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: c.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.insert_drive_file_outlined,
-                                size: 14, color: c),
-                            const SizedBox(width: 6),
-                            Text(
-                              '${e.key}  ${e.value}',
-                              style: TextStyle(
-                                color: c,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
 
         // ── Recently Read ──
         if (last5.isNotEmpty) ...[
@@ -1288,18 +1502,139 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ],
         ),
+        // ── Library management actions ──────────────────────
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded,
+                color: AppColors.textSecondary),
+            tooltip: 'Library options',
+            onSelected: (value) {
+              switch (value) {
+                case 'scan_folder':
+                  _selectAndScanFolder();
+                  break;
+                case 'backup':
+                  _backupDatabase();
+                  break;
+                case 'restore':
+                  _restoreDatabase();
+                  break;
+              }
+            },
+            itemBuilder: (_) => [
+              // ── Scan / Add Folder ──
+              PopupMenuItem<String>(
+                value: 'scan_folder',
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.folder_open_rounded,
+                          color: AppColors.accent, size: 18),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Add Library Folder',
+                            style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13)),
+                        Text(
+                          _libraryFolderPath != null
+                              ? _libraryFolderPath!.split('/').last
+                              : 'Pick a folder to scan',
+                          style: const TextStyle(
+                              color: AppColors.textMuted, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              // ── Backup ──
+              const PopupMenuItem<String>(
+                value: 'backup',
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 30,
+                      height: 30,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Color(0x1A00E676), // AppColors.green dim
+                          borderRadius:
+                              BorderRadius.all(Radius.circular(8)),
+                        ),
+                        child: Icon(Icons.cloud_upload_rounded,
+                            color: AppColors.green, size: 18),
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Backup',
+                            style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13)),
+                        Text('Save metadata to backup.db',
+                            style: TextStyle(
+                                color: AppColors.textMuted,
+                                fontSize: 11)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              // ── Restore ──
+              const PopupMenuItem<String>(
+                value: 'restore',
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 30,
+                      height: 30,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Color(0x1AFF9100), // AppColors.orange dim
+                          borderRadius:
+                              BorderRadius.all(Radius.circular(8)),
+                        ),
+                        child: Icon(Icons.cloud_download_rounded,
+                            color: AppColors.orange, size: 18),
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Restore',
+                            style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13)),
+                        Text('Reload from backup.db',
+                            style: TextStyle(
+                                color: AppColors.textMuted,
+                                fontSize: 11)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
       body: pages[_currentNavIndex],
-      floatingActionButton: _currentNavIndex == 0
-          ? FloatingActionButton.extended(
-              onPressed: _goToAddBook,
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Add Book',
-                  style: TextStyle(fontWeight: FontWeight.w600)),
-            )
-          : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentNavIndex,
         onDestinationSelected: (index) {

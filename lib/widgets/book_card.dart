@@ -19,6 +19,7 @@ class BookCard extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback onDelete;
   final VoidCallback onFavoriteToggle;
+  final VoidCallback onEdit; // new: open EditBookScreen
 
   const BookCard({
     super.key,
@@ -27,6 +28,7 @@ class BookCard extends StatefulWidget {
     required this.onTap,
     required this.onDelete,
     required this.onFavoriteToggle,
+    required this.onEdit,
   });
 
   @override
@@ -139,37 +141,26 @@ class _BookCardState extends State<BookCard>
                   ),
                 ),
 
-                // File type badge
+                // Favorite button — no background, just the heart
                 Positioned(
                   top: 8,
-                  left: 8,
-                  child: _buildFileTypeBadge(),
-                ),
-
-                // Favorite button — animated background
-                Positioned(
-                  top: 4,
-                  right: 4,
+                  right: 8,
                   child: GestureDetector(
                     onTap: () {
                       HapticFeedback.lightImpact();
                       widget.onFavoriteToggle();
                     },
-                    child: AnimatedContainer(
+                    child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 220),
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: widget.book.isFavorite
-                            ? AppColors.red.withValues(alpha: 0.85)
-                            : Colors.black.withValues(alpha: 0.55),
-                        shape: BoxShape.circle,
-                      ),
                       child: Icon(
                         widget.book.isFavorite
                             ? Icons.favorite_rounded
                             : Icons.favorite_outline_rounded,
-                        color: Colors.white,
-                        size: 14,
+                        key: ValueKey(widget.book.isFavorite),
+                        color: widget.book.isFavorite
+                            ? const Color(0xFFB71C1C) // Dark red
+                            : Colors.white70,
+                        size: 20,
                       ),
                     ),
                   ),
@@ -340,23 +331,17 @@ class _BookCardState extends State<BookCard>
                         HapticFeedback.lightImpact();
                         widget.onFavoriteToggle();
                       },
-                      child: AnimatedContainer(
+                      child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 220),
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: widget.book.isFavorite
-                              ? AppColors.red.withValues(alpha: 0.12)
-                              : Colors.transparent,
-                          shape: BoxShape.circle,
-                        ),
                         child: Icon(
                           widget.book.isFavorite
                               ? Icons.favorite_rounded
                               : Icons.favorite_outline_rounded,
+                          key: ValueKey(widget.book.isFavorite),
                           color: widget.book.isFavorite
-                              ? AppColors.red
+                              ? const Color(0xFFB71C1C) // Dark red
                               : AppColors.textMuted,
-                          size: 18,
+                          size: 20,
                         ),
                       ),
                     ),
@@ -373,8 +358,6 @@ class _BookCardState extends State<BookCard>
                 const SizedBox(height: 7),
                 Row(children: [
                   _buildGenreChip(),
-                  const SizedBox(width: 6),
-                  _buildFileTypeBadge(),
                 ]),
                 const SizedBox(height: 7),
 
@@ -538,34 +521,6 @@ class _BookCardState extends State<BookCard>
     );
   }
 
-  Widget _buildFileTypeBadge() {
-    const typeColors = {
-      'pdf':  AppColors.red,
-      'epub': AppColors.primary,
-      'txt':  AppColors.textSecondary,
-      'doc':  Color(0xFF2196F3),
-      'docx': Color(0xFF1976D2),
-    };
-    final c =
-        typeColors[widget.book.fileType.toLowerCase()] ?? AppColors.textMuted;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: c.withValues(alpha: 0.45)),
-      ),
-      child: Text(
-        widget.book.fileType.toUpperCase(),
-        style: TextStyle(
-          color: c,
-          fontSize: 8,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
 
   // ─── Options Bottom Sheet ─────────────────────────────────────────────────
 
@@ -670,6 +625,15 @@ class _BookCardState extends State<BookCard>
                 },
               ),
               _sheetTile(
+                icon: Icons.edit_rounded,
+                label: 'Edit Book',
+                iconColor: AppColors.accent,
+                onTap: () {
+                  Navigator.pop(context);
+                  widget.onEdit();
+                },
+              ),
+              _sheetTile(
                 icon: widget.book.isFavorite
                     ? Icons.favorite_rounded
                     : Icons.favorite_outline_rounded,
@@ -686,7 +650,7 @@ class _BookCardState extends State<BookCard>
               ),
               _sheetTile(
                 icon: Icons.delete_outline_rounded,
-                label: 'Delete Book',
+                label: 'Remove from Library',
                 iconColor: AppColors.red,
                 labelColor: AppColors.red,
                 onTap: () {
