@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'screens/home_screen.dart';
+import 'services/background_scan_service.dart';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 class AppColors {
@@ -64,6 +65,9 @@ void main() async {
     systemNavigationBarColor: AppColors.bg,
     systemNavigationBarIconBrightness: Brightness.light,
   ));
+
+  // ── Init WorkManager for weekly background scan ─────────────────────────────
+  await BackgroundScanService.initialize();
 
   runApp(const MyApp());
 }

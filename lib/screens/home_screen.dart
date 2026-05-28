@@ -5,12 +5,14 @@ import 'package:file_picker/file_picker.dart';
 import '../database/db_helper.dart';
 import '../models/book_model.dart';
 import '../services/backup_restore_service.dart';
+import '../services/background_scan_service.dart';
 import '../utils/constants.dart';
 import '../utils/page_transitions.dart';
 import 'edit_book_screen.dart';
 import 'book_detail_screen.dart';
 import '../widgets/book_card.dart';
 import '../widgets/filter_bottom_sheet.dart';
+import '../widgets/reading_heatmap.dart';
 import '../main.dart' show AppColors;
 
 class HomeScreen extends StatefulWidget {
@@ -36,6 +38,10 @@ class _HomeScreenState extends State<HomeScreen>
   int _currentStreak = 0;
   int _longestStreak = 0;
   int _totalReadingSeconds = 0;
+  Map<String, int> _heatmapData = {};
+
+  // Completed section toggle
+  bool _showCompletedSection = false;
 
   /// Path to the folder the user has selected as their library folder.
   /// Persisted in-memory only — for a real app, store in shared_preferences.
@@ -118,11 +124,17 @@ class _HomeScreenState extends State<HomeScreen>
         }
       }
 
+      final heatmap = <String, int>{};
+      for (final s in stats) {
+        heatmap[s['date'] as String] = s['secondsRead'] as int;
+      }
+
       setState(() {
         _allBooks = books;
         _currentStreak = currentStreak;
         _longestStreak = longestStreak;
         _totalReadingSeconds = totalSeconds;
+        _heatmapData = heatmap;
         _isLoading = false;
       });
       _applyFilters();
@@ -135,6 +147,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _applyFilters() {
     List<Book> result = List.from(_allBooks);
+
+    // Always exclude completed books from the main list
+    result = result.where((b) => !b.isCompleted).toList();
 
     // Genre filter — book.genre may be comma-separated (e.g. "Fiction, Fantasy")
     if (_selectedGenre != 'All') {
@@ -246,7 +261,6 @@ class _HomeScreenState extends State<HomeScreen>
   /// Let the user pick a folder on external storage, then scan it.
   Future<void> _selectAndScanFolder() async {
     try {
-      // file_picker can pick a directory on Android
       final result = await FilePicker.getDirectoryPath(
         dialogTitle: 'Select your PDF library folder',
       );
@@ -255,6 +269,11 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() => _isLoading = true);
 
       _libraryFolderPath = result;
+
+      // Persist the path and schedule weekly auto-scan
+      await BackgroundScanService.saveFolderPath(result);
+      await BackgroundScanService.scheduleWeeklyScan(result);
+
       final scanResult = await _backupService.scanLibraryFolder(result);
 
       if (!mounted) return;
@@ -263,7 +282,8 @@ class _HomeScreenState extends State<HomeScreen>
 
       _showSnackbar(
         'Scan complete: ${scanResult.added} new book${scanResult.added == 1 ? '' : 's'} added, '
-        '${scanResult.updated} file path${scanResult.updated == 1 ? '' : 's'} updated.',
+        '${scanResult.updated} file path${scanResult.updated == 1 ? '' : 's'} updated. '
+        'Weekly auto-scan scheduled every Sunday.',
       );
     } catch (e) {
       if (mounted) {
@@ -766,8 +786,140 @@ class _HomeScreenState extends State<HomeScreen>
           )
         else
           _buildBooksSliver(),
+
+        // ── Completed Books section (always at bottom) ──
+        SliverToBoxAdapter(child: _buildCompletedSection()),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 20)),
       ],
     );
+  }
+
+  // ─── Completed Books ──────────────────────────────────
+
+  Widget _buildCompletedSection() {
+    final completed = _allBooks.where((b) => b.isCompleted).toList();
+    if (completed.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: Column(
+        children: [
+          // Tap-to-toggle header
+          GestureDetector(
+            onTap: () => setState(() => _showCompletedSection = !_showCompletedSection),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.surface2,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _showCompletedSection
+                      ? AppColors.green.withValues(alpha: 0.5)
+                      : AppColors.border,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: AppColors.green.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.check_circle_rounded,
+                        size: 16, color: AppColors.green),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Completed Books',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.green.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${completed.length}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.green,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    _showCompletedSection
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: AppColors.textMuted,
+                    size: 20,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Expandable grid
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 260),
+            crossFadeState: _showCompletedSection
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            firstChild: Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  childAspectRatio: 0.52,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                ),
+                itemCount: completed.length,
+                itemBuilder: (context, i) {
+                  final book = completed[i];
+                  return BookCard(
+                    book: book,
+                    isGridView: true,
+                    onTap: () => _goToBookDetail(book),
+                    onDelete: () => _deleteBook(book),
+                    onEdit: () => _goToEditBook(book),
+                    onFavoriteToggle: () async {
+                      await DBHelper.instance.toggleFavorite(book.id!, !book.isFavorite);
+                      _loadBooks();
+                    },
+                    onReread: () => _rereadBook(book),
+                  );
+                },
+              ),
+            ),
+            secondChild: const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _rereadBook(Book book) async {
+    // Reset progress and mark not-completed so book returns to main library
+    final updated = book.copyWith(
+      currentPage: 0,
+      readingProgress: 0.0,
+      isCompleted: false,
+    );
+    await DBHelper.instance.updateBook(updated);
+    _loadBooks();
+    _showSnackbar('"${book.title}" moved back to library for re-reading!');
   }
 
   Widget _buildFavoritesPage() {
@@ -1098,6 +1250,25 @@ class _HomeScreenState extends State<HomeScreen>
                 borderColor: borderColor,
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+
+          // ── Reading Activity Heatmap ──
+          _buildSection(
+            cardColor: cardColor,
+            borderColor: borderColor,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _sectionHeader(
+                  icon: Icons.grid_view_rounded,
+                  title: 'Reading Activity',
+                  color: AppColors.primary,
+                ),
+                const SizedBox(height: 16),
+                ReadingHeatmap(dailyData: _heatmapData),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
 

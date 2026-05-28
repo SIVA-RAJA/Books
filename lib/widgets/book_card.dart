@@ -19,7 +19,8 @@ class BookCard extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback onDelete;
   final VoidCallback onFavoriteToggle;
-  final VoidCallback onEdit; // new: open EditBookScreen
+  final VoidCallback onEdit;
+  final VoidCallback? onReread;  // only provided for completed books
 
   const BookCard({
     super.key,
@@ -29,6 +30,7 @@ class BookCard extends StatefulWidget {
     required this.onDelete,
     required this.onFavoriteToggle,
     required this.onEdit,
+    this.onReread,
   });
 
   @override
@@ -658,6 +660,17 @@ class _BookCardState extends State<BookCard>
                   widget.onDelete();
                 },
               ),
+              // Re-read option — only shown for completed books
+              if (widget.onReread != null)
+                _sheetTile(
+                  icon: Icons.replay_rounded,
+                  label: 'Re-read',
+                  iconColor: const Color(0xFF00BCD4),
+                  onTap: () {
+                    Navigator.pop(context);
+                    widget.onReread!();
+                  },
+                ),
               const SizedBox(height: 8),
             ],
           ),
