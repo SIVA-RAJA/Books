@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:ui';
 import '../main.dart' show AppColors;
 import '../database/db_helper.dart';
 
@@ -47,10 +48,20 @@ class _WrappedScreenState extends State<WrappedScreen> with SingleTickerProvider
     final int minutes = (totalSeconds % 3600) ~/ 60;
 
     return Scaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         title: Text('${widget.year} Wrapped', style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
         backgroundColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              color: AppColors.bg.withValues(alpha: 0.75),
+            ),
+          ),
+        ),
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
       body: SingleChildScrollView(

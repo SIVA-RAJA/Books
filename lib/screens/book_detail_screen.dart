@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
+import 'dart:ui';
 import '../models/book_model.dart';
 import '../database/db_helper.dart';
 import 'pdf_reader_screen.dart';
@@ -150,6 +151,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     final size = MediaQuery.of(context).size;
 
     return Scaffold(
+      extendBody: true,
       backgroundColor: AppColors.bg,
       body: CustomScrollView(
         slivers: [
@@ -497,13 +499,16 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
       ),
 
       // ── Read Button ──
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          border: Border(top: BorderSide(color: AppColors.border)),
-        ),
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-        child: SizedBox(
+      bottomNavigationBar: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.surface.withValues(alpha: 0.75),
+              border: const Border(top: BorderSide(color: AppColors.border)),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+            child: SizedBox(
           height: 54,
           child: FilledButton.icon(
             onPressed: _openReader,
@@ -524,6 +529,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                   fontSize: 15, fontWeight: FontWeight.bold),
             ),
           ),
+        ),
+      ),
         ),
       ),
     );

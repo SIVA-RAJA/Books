@@ -299,9 +299,10 @@ class _AddBookScreenState extends State<AddBookScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: AppColors.bg,
       appBar: AppBar(
-        backgroundColor: AppColors.bg,
+        backgroundColor: Colors.transparent,
         title: const Text(
           'Add New Book',
           style: TextStyle(
@@ -309,6 +310,14 @@ class _AddBookScreenState extends State<AddBookScreen> {
         ),
         centerTitle: true,
         elevation: 0,
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              color: AppColors.bg.withValues(alpha: 0.75),
+            ),
+          ),
+        ),
         iconTheme: const IconThemeData(color: AppColors.textSecondary),
       ),
       body: _isLoading

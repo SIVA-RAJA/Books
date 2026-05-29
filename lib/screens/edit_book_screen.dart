@@ -253,9 +253,10 @@ class _EditBookScreenState extends State<EditBookScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: AppColors.bg,
       appBar: AppBar(
-        backgroundColor: AppColors.bg,
+        backgroundColor: Colors.transparent,
         title: const Text(
           'Edit Book',
           style: TextStyle(
@@ -263,6 +264,14 @@ class _EditBookScreenState extends State<EditBookScreen> {
         ),
         centerTitle: true,
         elevation: 0,
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              color: AppColors.bg.withValues(alpha: 0.75),
+            ),
+          ),
+        ),
         iconTheme: const IconThemeData(color: AppColors.textSecondary),
       ),
       body: _isLoading

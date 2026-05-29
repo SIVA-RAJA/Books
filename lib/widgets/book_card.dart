@@ -145,24 +145,28 @@ class _BookCardState extends State<BookCard>
 
                 // Favorite button — no background, just the heart
                 Positioned(
-                  top: 8,
-                  right: 8,
+                  top: 0,
+                  right: 0,
                   child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
                     onTap: () {
                       HapticFeedback.lightImpact();
                       widget.onFavoriteToggle();
                     },
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 220),
-                      child: Icon(
-                        widget.book.isFavorite
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_outline_rounded,
-                        key: ValueKey(widget.book.isFavorite),
-                        color: widget.book.isFavorite
-                            ? const Color(0xFFB71C1C) // Dark red
-                            : Colors.white70,
-                        size: 20,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        child: Icon(
+                          widget.book.isFavorite
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_outline_rounded,
+                          key: ValueKey(widget.book.isFavorite),
+                          color: widget.book.isFavorite
+                              ? const Color(0xFFB71C1C) // Dark red
+                              : Colors.white70,
+                          size: 20,
+                        ),
                       ),
                     ),
                   ),
@@ -329,21 +333,25 @@ class _BookCardState extends State<BookCard>
                     const SizedBox(width: 4),
                     // Animated favorite icon
                     GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () {
                         HapticFeedback.lightImpact();
                         widget.onFavoriteToggle();
                       },
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        child: Icon(
-                          widget.book.isFavorite
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_outline_rounded,
-                          key: ValueKey(widget.book.isFavorite),
-                          color: widget.book.isFavorite
-                              ? const Color(0xFFB71C1C) // Dark red
-                              : AppColors.textMuted,
-                          size: 20,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          child: Icon(
+                            widget.book.isFavorite
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_outline_rounded,
+                            key: ValueKey(widget.book.isFavorite),
+                            color: widget.book.isFavorite
+                                ? const Color(0xFFB71C1C) // Dark red
+                                : AppColors.textMuted,
+                            size: 20,
+                          ),
                         ),
                       ),
                     ),
@@ -447,6 +455,7 @@ class _BookCardState extends State<BookCard>
         width: width,
         height: height,
         fit: BoxFit.cover,
+        cacheWidth: 400, // Optimize decoding for smooth scrolling
         errorBuilder: (_, __, ___) => _placeholder(width, height),
       );
     }
@@ -561,6 +570,7 @@ class _BookCardState extends State<BookCard>
                             width: 44,
                             height: 58,
                             fit: BoxFit.cover,
+                            cacheWidth: 150, // Optimize memory for thumbnail
                           )
                         : Container(
                             width: 44,

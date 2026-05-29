@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:io';
+import 'dart:ui';
 import 'package:file_picker/file_picker.dart';
 import '../database/db_helper.dart';
 import '../models/book_model.dart';
@@ -209,15 +210,25 @@ class _HomeScreenState extends State<HomeScreen>
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent, // Required for blur to show
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => FilterBottomSheet(
-        selectedSort: _selectedSort,
-        onSortChanged: (sort) {
-          setState(() => _selectedSort = sort);
-          _loadBooks();
-        },
+      builder: (_) => ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+          child: Container(
+            color: AppColors.surface2.withValues(alpha: 0.6),
+            child: FilterBottomSheet(
+              selectedSort: _selectedSort,
+              onSortChanged: (sort) {
+                setState(() => _selectedSort = sort);
+                _loadBooks();
+              },
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -256,6 +267,23 @@ class _HomeScreenState extends State<HomeScreen>
       } catch (_) {}
       _loadBooks();
     }
+  }
+
+  // ─── Toggle Favorite ──────────────────────────────────
+
+  Future<void> _toggleFavorite(Book book) async {
+    final newValue = !book.isFavorite;
+    final updatedBook = book.copyWith(isFavorite: newValue);
+    
+    setState(() {
+      final allIdx = _allBooks.indexWhere((b) => b.id == book.id);
+      if (allIdx != -1) _allBooks[allIdx] = updatedBook;
+      
+      final filteredIdx = _filteredBooks.indexWhere((b) => b.id == book.id);
+      if (filteredIdx != -1) _filteredBooks[filteredIdx] = updatedBook;
+    });
+
+    await DBHelper.instance.toggleFavorite(book.id!, newValue);
   }
 
   // ─── Library Folder ───────────────────────────────────
@@ -471,6 +499,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 width: 52,
                                 height: 76,
                                 fit: BoxFit.cover,
+                                cacheWidth: 150, // Optimize memory for thumbnail
                                 errorBuilder: (_, __, ___) =>
                                     _continueReadingPlaceholder(book),
                               )
@@ -644,11 +673,7 @@ class _HomeScreenState extends State<HomeScreen>
                 onTap: () => _goToBookDetail(book),
                 onDelete: () => _deleteBook(book),
                 onEdit: () => _goToEditBook(book),
-                onFavoriteToggle: () async {
-                  await DBHelper.instance
-                      .toggleFavorite(book.id!, !book.isFavorite);
-                  _loadBooks();
-                },
+                onFavoriteToggle: () => _toggleFavorite(book),
               );
             },
             childCount: _filteredBooks.length,
@@ -668,11 +693,7 @@ class _HomeScreenState extends State<HomeScreen>
                 onTap: () => _goToBookDetail(book),
                 onDelete: () => _deleteBook(book),
                 onEdit: () => _goToEditBook(book),
-                onFavoriteToggle: () async {
-                  await DBHelper.instance
-                      .toggleFavorite(book.id!, !book.isFavorite);
-                  _loadBooks();
-                },
+                onFavoriteToggle: () => _toggleFavorite(book),
               );
             },
             childCount: _filteredBooks.length,
@@ -691,13 +712,29 @@ class _HomeScreenState extends State<HomeScreen>
         SliverAppBar(
           pinned: true,
           floating: false,
-          backgroundColor: AppColors.bg,
+          backgroundColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
           elevation: 0,
           scrolledUnderElevation: 0,
           automaticallyImplyLeading: false,
           titleSpacing: 0,
           toolbarHeight: 72,
+          flexibleSpace: ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.bg.withValues(alpha: 0.4),
+                  border: Border(
+                    bottom: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.08),
+                      width: 0.5,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           title: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
             child: SearchBar(
@@ -774,6 +811,9 @@ class _HomeScreenState extends State<HomeScreen>
                   ],
                 ),
               ),
+
+              // ── Completed Books section ──
+              _buildCompletedSection(),
             ],
           ),
         ),
@@ -789,10 +829,7 @@ class _HomeScreenState extends State<HomeScreen>
         else
           _buildBooksSliver(),
 
-        // ── Completed Books section (always at bottom) ──
-        SliverToBoxAdapter(child: _buildCompletedSection()),
-
-        const SliverToBoxAdapter(child: SizedBox(height: 20)),
+        const SliverToBoxAdapter(child: SizedBox(height: 140)),
       ],
     );
   }
@@ -896,10 +933,7 @@ class _HomeScreenState extends State<HomeScreen>
                     onTap: () => _goToBookDetail(book),
                     onDelete: () => _deleteBook(book),
                     onEdit: () => _goToEditBook(book),
-                    onFavoriteToggle: () async {
-                      await DBHelper.instance.toggleFavorite(book.id!, !book.isFavorite);
-                      _loadBooks();
-                    },
+                    onFavoriteToggle: () => _toggleFavorite(book),
                     onReread: () => _rereadBook(book),
                   );
                 },
@@ -960,8 +994,9 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       );
     }
+    final topPadding = MediaQuery.of(context).padding.top + kToolbarHeight + 12;
     return GridView.builder(
-      padding: const EdgeInsets.all(12),
+      padding: EdgeInsets.fromLTRB(12, topPadding, 12, 140),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
         childAspectRatio: 0.52,
@@ -977,11 +1012,7 @@ class _HomeScreenState extends State<HomeScreen>
           onTap: () => _goToBookDetail(book),
           onDelete: () => _deleteBook(book),
           onEdit: () => _goToEditBook(book),
-          onFavoriteToggle: () async {
-            await DBHelper.instance
-                .toggleFavorite(book.id!, !book.isFavorite);
-            _loadBooks();
-          },
+          onFavoriteToggle: () => _toggleFavorite(book),
         );
       },
     );
@@ -1018,12 +1049,6 @@ class _HomeScreenState extends State<HomeScreen>
       ..sort((a, b) => b.value.compareTo(a.value));
     final topGenres = sortedGenres.take(5).toList();
 
-    // Recently read books (has lastRead)
-    final recentlyRead = _allBooks
-        .where((b) => b.lastRead != null)
-        .toList()
-      ..sort((a, b) => b.lastRead!.compareTo(a.lastRead!));
-    final last5 = recentlyRead.take(5).toList();
 
     // File type breakdown
     final typeCounts = <String, int>{};
@@ -1045,8 +1070,9 @@ class _HomeScreenState extends State<HomeScreen>
     final todayKey = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final todaySeconds = _heatmapData[todayKey] ?? 0;
 
+    final topPadding = MediaQuery.of(context).padding.top + kToolbarHeight + 16;
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      padding: EdgeInsets.fromLTRB(16, topPadding, 16, 140),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1450,95 +1476,6 @@ class _HomeScreenState extends State<HomeScreen>
           ],
 
 
-        // ── Recently Read ──
-        if (last5.isNotEmpty) ...[
-          _buildSection(
-            cardColor: cardColor,
-            borderColor: borderColor,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _sectionHeader(
-                  icon: Icons.history_rounded,
-                  title: 'Recently Read',
-                  color: AppColors.orange,
-                ),
-                const SizedBox(height: 12),
-                ...last5.map((book) {
-                  final ago = _timeAgo(book.lastRead!);
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Row(
-                      children: [
-                        // Mini cover
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary
-                                .withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(
-                            Icons.menu_book_rounded,
-                            size: 18,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                book.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w500,
-                                  fontSize: 13,
-                                  color: AppColors.textPrimary,
-                                ),
-                              ),
-                              Text(
-                                ago,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.textMuted,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        // Progress pill
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: _progressColor(book.readingProgress)
-                                .withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            '${(book.readingProgress * 100).toInt()}%',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: _progressColor(
-                                  book.readingProgress),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-              ],
-            ),
-          ),
-        ],
-
         // ── Empty state ──
         if (total == 0)
           Center(
@@ -1698,20 +1635,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Color _progressColor(double progress) {
-    if (progress >= 1.0) return const Color(0xFF4CAF50);
-    if (progress > 0) return const Color(0xFF6C63FF);
-    return Colors.grey;
-  }
 
-  String _timeAgo(DateTime dt) {
-    final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays == 1) return 'Yesterday';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return '${(diff.inDays / 7).floor()}w ago';
-  }
   // ─── Build ────────────────────────────────────────────
 
   @override
@@ -1723,9 +1647,28 @@ class _HomeScreenState extends State<HomeScreen>
     ];
 
     return Scaffold(
+      extendBody: true,
+      extendBodyBehindAppBar: true,
       backgroundColor: AppColors.bg,
       appBar: AppBar(
-        backgroundColor: AppColors.bg,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.bg.withValues(alpha: 0.4),
+                border: Border(
+                  bottom: BorderSide(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    width: 0.5,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
         title: Row(
           children: [
             // Logo image
@@ -1888,28 +1831,36 @@ class _HomeScreenState extends State<HomeScreen>
         ],
       ),
       body: pages[_currentNavIndex],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentNavIndex,
-        onDestinationSelected: (index) {
-          setState(() => _currentNavIndex = index);
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.library_books_outlined),
-            selectedIcon: Icon(Icons.library_books_rounded),
-            label: 'Library',
+      bottomNavigationBar: ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: NavigationBar(
+            backgroundColor: AppColors.surface.withValues(alpha: 0.65),
+            elevation: 0,
+            selectedIndex: _currentNavIndex,
+            onDestinationSelected: (index) {
+              setState(() => _currentNavIndex = index);
+            },
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.library_books_outlined),
+                selectedIcon: Icon(Icons.library_books_rounded),
+                label: 'Library',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.favorite_outline_rounded),
+                selectedIcon: Icon(Icons.favorite_rounded),
+                label: 'Favorites',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.analytics_outlined),
+                selectedIcon: Icon(Icons.analytics_rounded),
+                label: 'Stats',
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.favorite_outline_rounded),
-            selectedIcon: Icon(Icons.favorite_rounded),
-            label: 'Favorites',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.analytics_outlined),
-            selectedIcon: Icon(Icons.analytics_rounded),
-            label: 'Stats',
-          ),
-        ],
+        ),
       ),
     );
   }
