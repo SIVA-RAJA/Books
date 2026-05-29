@@ -45,7 +45,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   late AnimationController _controlsAnim;
 
   // Reading theme
-  static const _bgColor    = Color(0xFF0D0D14);
+  static const _bgColor    = Colors.black; // Pure vanta black
   static const _textColor  = Color(0xFFE8E4D9);
   static const _lineHeight = 1.78;
 

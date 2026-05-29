@@ -136,6 +136,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.black, // Pure vanta black
       appBar: _showControls
           ? AppBar(
               title: Column(
