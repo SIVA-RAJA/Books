@@ -87,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen>
     try {
       final books = await DBHelper.instance.getSortedBooks(_selectedSort);
       final stats = await DBHelper.instance.getDailyStats();
-      
+
       int currentStreak = 0;
       int longestStreak = 0;
       int totalSeconds = 0;
@@ -1125,7 +1125,7 @@ class _HomeScreenState extends State<HomeScreen>
                             total: total,
                             completedColor: AppColors.green,
                             readingColor: AppColors.primary,
-                            notStartedColor: AppColors.surface3,
+                            notStartedColor: const Color.fromARGB(255, 122, 63, 0),
                           ),
                           child: Center(
                             child: Column(
@@ -1172,7 +1172,7 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                       const SizedBox(height: 10),
                       _legendItem(
-                        color: AppColors.surface3,
+                        color: const Color.fromARGB(255, 122, 63, 0),
                         label: 'Not Started',
                         value: notStarted,
                         total: total,
@@ -1243,7 +1243,7 @@ class _HomeScreenState extends State<HomeScreen>
             ],
           ),
           const SizedBox(height: 12),
-          
+
           // ── Time Row ──
           Row(
             children: [

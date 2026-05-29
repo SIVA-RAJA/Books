@@ -128,6 +128,23 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     return AppColors.textMuted;
   }
 
+  String _getETAText() {
+    if (_book.isCompleted) return 'Finished';
+    if (_book.totalPages <= 0) return 'Unknown';
+    
+    final remainingPages = _book.totalPages - _book.currentPage;
+    if (remainingPages <= 0) return 'Finished';
+    
+    // Average reading speed: ~1.5 minutes per page
+    final remainingMinutes = (remainingPages * 1.5).round();
+    
+    if (remainingMinutes < 60) return '$remainingMinutes m';
+    final hours = remainingMinutes ~/ 60;
+    final mins = remainingMinutes % 60;
+    if (mins == 0) return '${hours}h';
+    return '${hours}h ${mins}m';
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -368,6 +385,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                           const Divider(color: AppColors.border, height: 20),
                           _infoRow(Icons.auto_stories_rounded, 'Pages',
                               '${_book.totalPages}'),
+                          const Divider(color: AppColors.border, height: 20),
+                          _infoRow(Icons.hourglass_bottom_rounded, 'Time to Finish',
+                              _getETAText()),
                         ],
                       ],
                     ),

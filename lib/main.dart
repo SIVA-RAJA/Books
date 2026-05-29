@@ -5,7 +5,7 @@ import 'screens/home_screen.dart';
 import 'services/background_scan_service.dart';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
-class AppColors {
+/*class AppColors {
   // Brand
 
   static const primary    = Color(0xFF7C6FFF); // electric violet
@@ -35,7 +35,37 @@ class AppColors {
   // Borders
   static const border   = Color(0xFF252545);
   static const borderBright = Color(0xFF3A3A6A);
+}*/
+
+class AppColors {
+  // Brand (Buttons, highlights are just grey!)
+  static const primary    = Color(0xFF404040); // Dark grey buttons
+  static const primaryDim = Color(0xFF262626); // Even darker grey
+  static const accent     = Color(0xFF606060); // Mid-grey accents
+  static const accentDim  = Color(0xFF333333);
+
+  // Surfaces (Layers of black)
+  static const bg         = Color(0xFF000000); // Pitch black
+  static const surface    = Color(0xFF080808); // Barely lighter black
+  static const surface2   = Color(0xFF121212); // Very dark grey
+  static const surface3   = Color(0xFF1A1A1A); // Dark grey
+
+  // Text
+  static const textPrimary   = Color(0xFFCCCCCC); // Soft light grey
+  static const textSecondary = Color(0xFF888888); // Dim grey
+  static const textMuted     = Color(0xFF555555); // Very dim grey
+
+  // Status (Heavily desaturated so they don't pop out too much)
+  static const green    = Color(0xFF4A6B4A);
+  static const orange   = Color(0xFF8B6343);
+  static const red      = Color(0xFF824545);
+  static const yellow   = Color(0xFF8C824A);
+
+  // Borders
+  static const border   = Color(0xFF1A1A1A);
+  static const borderBright = Color(0xFF2B2B2B);
 }
+
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
