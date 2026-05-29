@@ -41,7 +41,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   // ── UI ────────────────────────────────────────────────────────
   bool _showControls = true;
-  double _fontSize = 17.0;
+  double _fontSize = 12.0;
   late AnimationController _controlsAnim;
 
   // Reading theme

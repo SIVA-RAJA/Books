@@ -139,6 +139,113 @@ class DBHelper {
     return await db.query('daily_stats', orderBy: 'date ASC');
   }
 
+  /// Get current reading streak (consecutive days)
+  Future<int> getCurrentReadingStreak() async {
+    final db = await database;
+    final result = await db.query('daily_stats', orderBy: 'date DESC');
+    
+    if (result.isEmpty) return 0;
+
+    int streak = 0;
+    DateTime today = DateTime.now();
+    DateTime currentDate = DateTime(today.year, today.month, today.day);
+
+    bool checkDate(String dateStr, DateTime target) {
+      final parts = dateStr.split('-');
+      if (parts.length != 3) return false;
+      final d = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+      return d == target;
+    }
+
+    String firstDateStr = result.first['date'] as String;
+    if (checkDate(firstDateStr, currentDate)) {
+      // Streak includes today
+    } else if (checkDate(firstDateStr, currentDate.subtract(const Duration(days: 1)))) {
+      // Streak includes yesterday
+      currentDate = currentDate.subtract(const Duration(days: 1));
+    } else {
+      return 0; // Streak broken
+    }
+
+    for (final row in result) {
+      if (checkDate(row['date'] as String, currentDate)) {
+        streak++;
+        currentDate = currentDate.subtract(const Duration(days: 1));
+      } else {
+        break;
+      }
+    }
+    return streak;
+  }
+
+  // ─── Wrapped Stats ─────────────────────────────────────
+
+  Future<Map<String, dynamic>> getWrappedStats(int year) async {
+    final db = await database;
+    
+    // 1. Total Reading Time for the year
+    final yearStr = year.toString();
+    final timeResult = await db.rawQuery(
+      "SELECT SUM(secondsRead) as totalSeconds FROM daily_stats WHERE date LIKE ?",
+      ['$yearStr-%']
+    );
+    final totalSeconds = (timeResult.first['totalSeconds'] as int?) ?? 0;
+
+    // 2. Most Read Author (for that year)
+    final authorResult = await db.rawQuery('''
+      SELECT author, COUNT(*) as bookCount 
+      FROM books 
+      WHERE isCompleted = 1 AND lastRead LIKE ?
+      GROUP BY author 
+      ORDER BY bookCount DESC 
+      LIMIT 1
+    ''', ['$yearStr-%']);
+    String mostReadAuthor = "None";
+    if (authorResult.isNotEmpty) {
+      mostReadAuthor = authorResult.first['author'] as String? ?? "None";
+    }
+
+    // 3. Total Pages Read (from completed books in that year)
+    final pagesResult = await db.rawQuery(
+      "SELECT SUM(totalPages) as totalPages FROM books WHERE isCompleted = 1 AND lastRead LIKE ?",
+      ['$yearStr-%']
+    );
+    final totalPages = (pagesResult.first['totalPages'] as int?) ?? 0;
+
+    // 4. Total Books Completed that year
+    final booksCompletedResult = await db.rawQuery(
+      "SELECT COUNT(*) as count FROM books WHERE isCompleted = 1 AND lastRead LIKE ?",
+      ['$yearStr-%']
+    );
+    final totalBooksCompleted = (booksCompletedResult.first['count'] as int?) ?? 0;
+    
+    // 5. Busiest Reading Month (from daily_stats)
+    final busiestMonthResult = await db.rawQuery('''
+      SELECT SUBSTR(date, 6, 2) as month, SUM(secondsRead) as totalMonthSeconds 
+      FROM daily_stats 
+      WHERE date LIKE ?
+      GROUP BY month 
+      ORDER BY totalMonthSeconds DESC 
+      LIMIT 1
+    ''', ['$yearStr-%']);
+    
+    String busiestMonth = "None";
+    if (busiestMonthResult.isNotEmpty && busiestMonthResult.first['month'] != null) {
+      final monthStr = busiestMonthResult.first['month'] as String;
+      final monthInt = int.tryParse(monthStr) ?? 1;
+      final months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      busiestMonth = months[monthInt - 1];
+    }
+
+    return {
+      'totalSeconds': totalSeconds,
+      'mostReadAuthor': mostReadAuthor,
+      'totalPages': totalPages,
+      'totalBooksCompleted': totalBooksCompleted,
+      'busiestMonth': busiestMonth,
+    };
+  }
+
   // ─── Force close (needed before restore) ─────────────
 
   Future<void> closeDatabase() async {

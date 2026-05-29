@@ -13,7 +13,9 @@ import 'book_detail_screen.dart';
 import '../widgets/book_card.dart';
 import '../widgets/filter_bottom_sheet.dart';
 import '../widgets/reading_heatmap.dart';
+import '../widgets/reading_trend_chart.dart';
 import '../main.dart' show AppColors;
+import 'wrapped_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -1039,6 +1041,10 @@ class _HomeScreenState extends State<HomeScreen>
         ? Colors.white.withValues(alpha: 0.1)
         : Colors.black.withValues(alpha: 0.08);
 
+    final now = DateTime.now();
+    final todayKey = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final todaySeconds = _heatmapData[todayKey] ?? 0;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       child: Column(
@@ -1214,7 +1220,7 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           const SizedBox(height: 12),
 
-          // ── Streaks & Time Row ──
+          // ── Streaks Row ──
           Row(
             children: [
               _quickStatCard(
@@ -1234,13 +1240,34 @@ class _HomeScreenState extends State<HomeScreen>
                 cardColor: cardColor,
                 borderColor: borderColor,
               ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // ── Time Row ──
+          Row(
+            children: [
+              _quickStatCard(
+                icon: Icons.today_rounded,
+                label: "Today's Time",
+                value: todaySeconds >= 3600
+                    ? '${(todaySeconds ~/ 3600)}h ${(todaySeconds % 3600) ~/ 60}m'
+                    : todaySeconds >= 60
+                        ? '${todaySeconds ~/ 60}m'
+                        : todaySeconds > 0
+                            ? '< 1m'
+                            : '0m',
+                color: Colors.lightBlue,
+                cardColor: cardColor,
+                borderColor: borderColor,
+              ),
               const SizedBox(width: 10),
               _quickStatCard(
                 icon: Icons.timer_rounded,
-                label: 'Time Spent',
+                label: 'Total Time',
                 value: _totalReadingSeconds >= 3600
                     ? '${(_totalReadingSeconds ~/ 3600)}h ${(_totalReadingSeconds % 3600) ~/ 60}m'
-                    : _totalReadingSeconds > 60
+                    : _totalReadingSeconds >= 60
                         ? '${_totalReadingSeconds ~/ 60}m'
                         : _totalReadingSeconds > 0
                             ? '< 1m'
@@ -1250,6 +1277,61 @@ class _HomeScreenState extends State<HomeScreen>
                 borderColor: borderColor,
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+
+          // ── Offline Wrapped ──
+          if (DateTime.now().month == 12 && DateTime.now().day == 31)
+            GestureDetector(
+              onTap: () {
+              Navigator.push(
+                context,
+                AppRoutes.slideUp(WrappedScreen(year: DateTime.now().year)),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [AppColors.primary, AppColors.accent]),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.celebration_rounded, color: Colors.white, size: 28),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Your ${DateTime.now().year} Wrapped', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 2),
+                        const Text('View your local reading year in review', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 16),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Reading Trend (Area Chart) ──
+          _buildSection(
+            cardColor: cardColor,
+            borderColor: borderColor,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _sectionHeader(
+                  icon: Icons.trending_up_rounded,
+                  title: 'Reading Trend',
+                  color: Colors.blueAccent,
+                ),
+                const SizedBox(height: 16),
+                ReadingTrendChart(dailyData: _heatmapData),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
 
