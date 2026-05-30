@@ -1,41 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'screens/home_screen.dart';
+import 'screens/quote_screen.dart';
 import 'services/background_scan_service.dart';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
-/*class AppColors {
-  // Brand
-
-  static const primary    = Color(0xFF7C6FFF); // electric violet
-  static const primaryDim = Color(0xFF5A4FCC);
-  static const accent     = Color(0xFF00D2FF); // cyan glow
-  static const accentDim  = Color(0xFF0099CC);
-
-
-  // Surfaces
-
-  static const bg         = Color(0xFF0D0D14); // near-black with blue tint
-  static const surface    = Color(0xFF13131F); // card surface
-  static const surface2   = Color(0xFF1A1A2E); // elevated card
-  static const surface3   = Color(0xFF1F1F35); // top-most
-
-  // Text
-  static const textPrimary   = Color(0xFFEEEEFF);
-  static const textSecondary = Color(0xFF8888BB);
-  static const textMuted     = Color(0xFF555577);
-
-  // Status
-  static const green    = Color(0xFF00E676);
-  static const orange   = Color(0xFFFF9100);
-  static const red      = Color(0xFFFF4D6D);
-  static const yellow   = Color(0xFFFFD600);
-
-  // Borders
-  static const border   = Color(0xFF252545);
-  static const borderBright = Color(0xFF3A3A6A);
-}*/
 
 class AppColors {
   // Brand (Buttons, highlights are just grey!)
@@ -333,7 +302,7 @@ class MyApp extends StatelessWidget {
       theme: darkTheme,
       darkTheme: darkTheme,
       themeMode: ThemeMode.dark, // always dark
-      home: const HomeScreen(),
+      home: const QuoteScreen(),
     );
   }
 }

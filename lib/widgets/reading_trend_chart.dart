@@ -77,7 +77,7 @@ class _ReadingTrendChartState extends State<ReadingTrendChart> {
     }
 
     maxY = maxY * 1.2;
-    double xInterval = (days / 6).ceilToDouble();
+    double xInterval = days <= 7 ? 1 : (days / 6).ceilToDouble();
     if (xInterval == 0) xInterval = 1;
 
     return Column(
@@ -145,7 +145,7 @@ class _ReadingTrendChartState extends State<ReadingTrendChart> {
                       
                       String text;
                       if (days <= 7) {
-                        text = ['M', 'T', 'W', 'T', 'F', 'S', 'S'][date.weekday - 1];
+                        text = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][date.weekday - 1];
                       } else if (days <= 30) {
                         text = '${date.day}/${date.month}';
                       } else if (days <= 365) {

@@ -138,7 +138,7 @@ class _ReadingHeatmapState extends State<ReadingHeatmap> {
     final now = DateTime.now();
 
     // Day-of-week labels shown on left (Sun → Sat)
-    const dayLabels = ['Sun', '', 'Tue', '', 'Thu', '', 'Sat'];
+    const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -190,7 +190,7 @@ class _ReadingHeatmapState extends State<ReadingHeatmap> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Day labels (Sun / Tue / Thu / Sat)
+              // Day labels
               Padding(
                 padding: const EdgeInsets.only(top: 18), // align below month labels
                 child: Column(
@@ -205,7 +205,7 @@ class _ReadingHeatmapState extends State<ReadingHeatmap> {
                           dayLabels[i],
                           style: const TextStyle(
                             fontSize: 8,
-                            color: AppColors.textMuted,
+                            color: AppColors.textSecondary,
                           ),
                         ),
                       ),

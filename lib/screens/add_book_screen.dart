@@ -199,13 +199,20 @@ class _AddBookScreenState extends State<AddBookScreen> {
       ),
     );
     if (result != null && result.isNotEmpty) {
-      setState(() => _selectedGenres.add(result));
+      setState(() {
+        _selectedGenres.remove('Other'); // Auto-remove 'Other' if they provide a custom one
+        _selectedGenres.add(result);
+      });
     }
   }
 
   void _toggleGenre(String genre) {
     if (genre == 'Other') {
-      _promptCustomGenre();
+      if (_selectedGenres.contains('Other')) {
+        setState(() => _selectedGenres.remove('Other'));
+      } else {
+        _promptCustomGenre();
+      }
       return;
     }
     setState(() {

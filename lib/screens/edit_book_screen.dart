@@ -185,12 +185,22 @@ class _EditBookScreenState extends State<EditBookScreen> {
       ),
     );
     if (result != null && result.isNotEmpty) {
-      setState(() => _selectedGenres.add(result));
+      setState(() {
+        _selectedGenres.remove('Other');
+        _selectedGenres.add(result);
+      });
     }
   }
 
   void _toggleGenre(String genre) {
-    if (genre == 'Other') { _promptCustomGenre(); return; }
+    if (genre == 'Other') {
+      if (_selectedGenres.contains('Other')) {
+        setState(() => _selectedGenres.remove('Other'));
+      } else {
+        _promptCustomGenre();
+      }
+      return;
+    }
     setState(() {
       if (_selectedGenres.contains(genre)) {
         _selectedGenres.remove(genre);
