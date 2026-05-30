@@ -33,11 +33,11 @@ class _QuoteScreenState extends State<QuoteScreen> {
       final prefs = await SharedPreferences.getInstance();
       int lastQuoteIndex = prefs.getInt('lastQuoteIndex') ?? -1;
       
-      // Increment and wrap around
-      int nextIndex = lastQuoteIndex + 1;
-      if (nextIndex >= jsonList.length) {
-        nextIndex = 0;
-      }
+      // Pick a random quote that isn't the same as the last one
+      int nextIndex;
+      do {
+        nextIndex = (DateTime.now().microsecondsSinceEpoch % jsonList.length);
+      } while (nextIndex == lastQuoteIndex && jsonList.length > 1);
       
       await prefs.setInt('lastQuoteIndex', nextIndex);
 
