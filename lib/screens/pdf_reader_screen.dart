@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import '../models/book_model.dart';
@@ -12,7 +11,7 @@ import '../main.dart' show AppColors;
 //  • Scrolls continuously like a PDF (one long vertical scroll)
 //  • Detects the visible page via ItemPositionsListener → saves to DB immediately
 //  • Back button (‹) always pops back to the BookDetailScreen
-//  • Font-size controls (A− / A+)
+//  • Font-size controls (A− /A+)
 //  • Jump-to-page dialog
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -70,7 +69,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       value: 1.0,
     );
 
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
     _loadDocument();
 
     // Listen to scroll → update current page + save immediately
@@ -85,7 +84,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     _itemPositionsListener.itemPositions.removeListener(_onScroll);
     _controlsAnim.dispose();
     _document?.dispose();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
     super.dispose();
   }
 

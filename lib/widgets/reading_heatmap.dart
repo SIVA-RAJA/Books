@@ -59,7 +59,7 @@ class _ReadingHeatmapState extends State<ReadingHeatmap> {
   }
 
   String _fmt(int? seconds) {
-    if (seconds == null || seconds == 0) return 'No reading';
+    if (seconds == null || seconds == 0) return 'No reading on this day';
     if (seconds < 60) return '${seconds}s read';
     final m = seconds ~/ 60;
     if (m < 60) return '${m}m read';
@@ -257,22 +257,34 @@ class _ReadingHeatmapState extends State<ReadingHeatmap> {
                           day.month == now.month &&
                           day.day == now.day;
 
-                      return Tooltip(
-                        message: '$key  ${_fmt(secs)}',
-                        child: Container(
-                          width: cellSize,
-                          height: cellSize,
-                          margin: const EdgeInsets.only(
-                              bottom: cellGap, right: cellGap),
-                          decoration: BoxDecoration(
-                            color: _colorFor(secs),
-                            borderRadius: BorderRadius.circular(2),
-                            border: isToday
-                                ? Border.all(
-                                    color: AppColors.accent,
-                                    width: 1.2,
-                                  )
-                                : null,
+                      return GestureDetector(
+                        onTap: () {
+                          ScaffoldMessenger.of(context).clearSnackBars();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('$key: ${_fmt(secs)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                              duration: const Duration(seconds: 2),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        },
+                        child: Tooltip(
+                          message: '$key: ${_fmt(secs)}',
+                          child: Container(
+                            width: cellSize,
+                            height: cellSize,
+                            margin: const EdgeInsets.only(
+                                bottom: cellGap, right: cellGap),
+                            decoration: BoxDecoration(
+                              color: _colorFor(secs),
+                              borderRadius: BorderRadius.circular(2),
+                              border: isToday
+                                  ? Border.all(
+                                      color: AppColors.accent,
+                                      width: 1.2,
+                                    )
+                                  : null,
+                            ),
                           ),
                         ),
                       );

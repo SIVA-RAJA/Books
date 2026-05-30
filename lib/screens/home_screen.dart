@@ -26,7 +26,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // State
   List<Book> _allBooks = [];
   List<Book> _filteredBooks = [];
@@ -59,6 +59,8 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _tabController = TabController(
       length: AppConstants.genres.length,
       vsync: this,
@@ -76,6 +78,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
     _tabController.dispose();
     super.dispose();
@@ -703,7 +706,14 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  // ─── Nav Pages ────────────────────────────────────────
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    }
+  }
+
+  // ─── Data Loading ────────────────────────────────────────
 
   Widget _buildLibraryPage() {
     return CustomScrollView(
@@ -1834,31 +1844,42 @@ class _HomeScreenState extends State<HomeScreen>
       bottomNavigationBar: ClipRRect(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: NavigationBar(
-            backgroundColor: AppColors.surface.withValues(alpha: 0.65),
-            elevation: 0,
-            selectedIndex: _currentNavIndex,
-            onDestinationSelected: (index) {
-              setState(() => _currentNavIndex = index);
-            },
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.library_books_outlined),
-                selectedIcon: Icon(Icons.library_books_rounded),
-                label: 'Library',
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.bg.withValues(alpha: 0.4),
+              border: Border(
+                top: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  width: 0.5,
+                ),
               ),
-              NavigationDestination(
-                icon: Icon(Icons.favorite_outline_rounded),
-                selectedIcon: Icon(Icons.favorite_rounded),
-                label: 'Favorites',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.analytics_outlined),
-                selectedIcon: Icon(Icons.analytics_rounded),
-                label: 'Stats',
-              ),
-            ],
+            ),
+            child: NavigationBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              selectedIndex: _currentNavIndex,
+              onDestinationSelected: (index) {
+                setState(() => _currentNavIndex = index);
+              },
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.library_books_outlined),
+                  selectedIcon: Icon(Icons.library_books_rounded),
+                  label: 'Library',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.favorite_outline_rounded),
+                  selectedIcon: Icon(Icons.favorite_rounded),
+                  label: 'Favorites',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.analytics_outlined),
+                  selectedIcon: Icon(Icons.analytics_rounded),
+                  label: 'Stats',
+                ),
+              ],
+            ),
           ),
         ),
       ),
