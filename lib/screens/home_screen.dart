@@ -10,6 +10,7 @@ import '../services/background_scan_service.dart';
 import '../utils/constants.dart';
 import '../utils/page_transitions.dart';
 import 'edit_book_screen.dart';
+import 'add_book_screen.dart';
 import 'book_detail_screen.dart';
 import '../widgets/book_card.dart';
 import '../widgets/filter_bottom_sheet.dart';
@@ -1716,6 +1717,12 @@ class _HomeScreenState extends State<HomeScreen>
             tooltip: 'Library options',
             onSelected: (value) {
               switch (value) {
+                case 'add_single':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AddBookScreen()),
+                  ).then((_) => _loadBooks());
+                  break;
                 case 'scan_folder':
                   _selectAndScanFolder();
                   break;
@@ -1728,6 +1735,39 @@ class _HomeScreenState extends State<HomeScreen>
               }
             },
             itemBuilder: (_) => [
+              // ── Add Single Book ──
+              PopupMenuItem<String>(
+                value: 'add_single',
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.add_box_rounded,
+                          color: AppColors.primary, size: 18),
+                    ),
+                    const SizedBox(width: 12),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Add Single Book',
+                            style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13)),
+                        Text('Manually add a specific file',
+                            style: TextStyle(
+                                color: AppColors.textMuted, fontSize: 11)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+
               // ── Scan / Add Folder ──
               PopupMenuItem<String>(
                 value: 'scan_folder',

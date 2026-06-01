@@ -109,8 +109,10 @@ class _AddBookScreenState extends State<AddBookScreen> {
   // app's documents directory since they are not original files.
 
   Future<String?> _extractPdfFirstPageAsCover(String pdfPath) async {
+    // Yield to the event loop to ensure the "Saving..." loading spinner renders
+    await Future.delayed(const Duration(milliseconds: 100));
     try {
-      final doc = await PdfDocument.openFile(pdfPath);
+      final doc = await PdfDocument.openFile(pdfPath).timeout(const Duration(seconds: 10));
       final page = doc.pages[0];
 
       const targetWidth = 300.0;
@@ -121,7 +123,7 @@ class _AddBookScreenState extends State<AddBookScreen> {
         fullWidth: targetWidth,
         fullHeight: targetHeight,
         backgroundColor: Colors.white,
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (pageImage == null) {
         await doc.dispose();
@@ -310,6 +312,8 @@ class _AddBookScreenState extends State<AddBookScreen> {
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
         title: const Text(
           'Add New Book',
           style: TextStyle(
@@ -319,9 +323,17 @@ class _AddBookScreenState extends State<AddBookScreen> {
         elevation: 0,
         flexibleSpace: ClipRect(
           child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
             child: Container(
-              color: AppColors.bg.withValues(alpha: 0.75),
+              decoration: BoxDecoration(
+                color: AppColors.bg.withValues(alpha: 0.0),
+                border: Border(
+                  bottom: BorderSide(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    width: 0.5,
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -343,7 +355,11 @@ class _AddBookScreenState extends State<AddBookScreen> {
               ),
             )
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                  16,
+                  MediaQuery.paddingOf(context).top + kToolbarHeight + 16,
+                  16,
+                  16),
               child: Form(
                 key: _formKey,
                 child: Column(
@@ -724,9 +740,6 @@ class _AddBookScreenState extends State<AddBookScreen> {
         return Icons.picture_as_pdf;
       case 'epub':
         return Icons.menu_book;
-      case 'doc':
-      case 'docx':
-        return Icons.description;
       case 'txt':
         return Icons.text_snippet;
       default:

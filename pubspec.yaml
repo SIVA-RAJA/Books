@@ -1,7 +1,7 @@
 name: books
 description: Personal Ebook Organizer
 publish_to: 'none'
-version: 2.0.0+10
+version: 3.0.0+11
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -44,6 +44,9 @@ dependencies:
   fl_chart: ^1.2.0
   workmanager: ^0.9.0+3
   shared_preferences: ^2.5.5
+
+  # ML Kit Translation
+  google_mlkit_translation: ^0.13.0
 
 dev_dependencies:
   flutter_test:

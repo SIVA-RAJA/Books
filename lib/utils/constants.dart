@@ -39,8 +39,6 @@ class AppConstants {
   static const List<String> supportedExtensions = [
     'pdf',
     'epub',
-    'doc',
-    'docx',
     'txt',
   ];
 

@@ -3,6 +3,7 @@ import 'package:pdfrx/pdfrx.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import '../models/book_model.dart';
 import '../database/db_helper.dart';
+import '../widgets/translation_bottom_sheet.dart';
 import '../main.dart' show AppColors;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -417,7 +418,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           ),
           const SizedBox(height: 20),
 
-          Text(
+          SelectableText(
             text,
             style: TextStyle(
               color: _textColor,
@@ -426,6 +427,32 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               fontFamily: 'Georgia',
               letterSpacing: 0.25,
             ),
+            contextMenuBuilder: (context, editableTextState) {
+              final List<ContextMenuButtonItem> buttonItems = [];
+              // Keep only the default 'Copy' button to avoid clutter
+              for (final item in editableTextState.contextMenuButtonItems) {
+                if (item.type == ContextMenuButtonType.copy) {
+                  buttonItems.add(item);
+                  break;
+                }
+              }
+              
+              buttonItems.add(ContextMenuButtonItem(
+                label: 'Translate to Tamil',
+                onPressed: () {
+                  ContextMenuController.removeAny();
+                  final selectedText = editableTextState.textEditingValue.selection.textInside(editableTextState.textEditingValue.text);
+                  if (selectedText.isNotEmpty) {
+                    TranslationBottomSheet.show(context, selectedText);
+                  }
+                },
+              ));
+              
+              return AdaptiveTextSelectionToolbar.buttonItems(
+                anchors: editableTextState.contextMenuAnchors,
+                buttonItems: buttonItems,
+              );
+            },
           ),
           const SizedBox(height: 32),
         ],

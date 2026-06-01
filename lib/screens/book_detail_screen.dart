@@ -5,6 +5,7 @@ import '../models/book_model.dart';
 import '../database/db_helper.dart';
 import 'pdf_reader_screen.dart';
 import 'epub_reader_screen.dart';
+import 'text_reader_screen.dart';
 import '../main.dart' show AppColors;
 
 class BookDetailScreen extends StatefulWidget {
@@ -46,8 +47,13 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         context,
         MaterialPageRoute(builder: (_) => EpubReaderScreen(book: _book)),
       );
+    } else if (type == 'txt') {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => TextReaderScreen(book: _book)),
+      );
     } else {
-      _showSnackbar('Opening with external app...');
+      _showSnackbar('Unsupported file type: ${_book.fileType}', isError: true);
       return;
     }
     if (mounted) _refreshBook();
@@ -64,10 +70,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
       builder: (_) => AlertDialog(
         backgroundColor: AppColors.surface2,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Delete Book',
+        title: const Text('Remove from Library',
             style: TextStyle(color: AppColors.textPrimary)),
         content: Text(
-          'Delete "${_book.title}" permanently?',
+          'Remove "${_book.title}" from your library?\n\nThe file on your device is NOT deleted.',
           style: const TextStyle(color: AppColors.textSecondary),
         ),
         actions: [
@@ -78,18 +84,19 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppColors.red),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
+            child: const Text('Remove'),
           ),
         ],
       ),
     );
 
     if (confirm != true) return;
+
+    // Remove from DB only — the original file stays on the user's device.
     await DBHelper.instance.deleteBook(_book.id!);
 
+    // Only delete the auto-generated cover thumbnail (app-owned, not user file).
     try {
-      final file = File(_book.filePath);
-      if (await file.exists()) await file.delete();
       final coverPath = _book.coverImagePath;
       if (coverPath != null) {
         final cover = File(coverPath);

@@ -22,8 +22,7 @@ import '../models/book_model.dart';
 
 class BackupRestoreService {
   // Fixed external backup path — matches the description in the spec
-  static const String _backupPath =
-      '/storage/emulated/0/MyLibrary/backup.db';
+  static const String _backupPath = '/storage/emulated/0/MyLibrary/backup.db';
 
   // ─── Backup ────────────────────────────────────────────────────────────────
 
@@ -70,10 +69,9 @@ class BackupRestoreService {
     int added = 0;
     int updated = 0;
 
-    final supportedExts = {'.pdf', '.epub', '.doc', '.docx', '.txt'};
+    final supportedExts = {'.pdf', '.epub', '.txt'};
 
-    await for (final entity
-        in dir.list(recursive: false, followLinks: false)) {
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
 
       final ext = p.extension(entity.path).toLowerCase();
@@ -164,7 +162,7 @@ class BackupRestoreService {
     dynamic pageImage;
     ui.Image? uiImage;
     try {
-      doc = await PdfDocument.openFile(pdfPath);
+      doc = await PdfDocument.openFile(pdfPath).timeout(const Duration(seconds: 10));
       final page = doc.pages[0];
 
       const targetWidth = 300.0;
@@ -175,7 +173,7 @@ class BackupRestoreService {
         fullWidth: targetWidth,
         fullHeight: targetHeight,
         backgroundColor: Colors.white,
-      );
+      ).timeout(const Duration(seconds: 10));
       if (pageImage == null) return null;
 
       uiImage = await pageImage.createImage();
@@ -189,7 +187,8 @@ class BackupRestoreService {
       if (!await coversDir.exists()) {
         await coversDir.create(recursive: true);
       }
-      final coverName = 'scan_cover_${DateTime.now().millisecondsSinceEpoch}.png';
+      final coverName =
+          'scan_cover_${DateTime.now().millisecondsSinceEpoch}.png';
       final coverFile = File('${coversDir.path}/$coverName');
       await coverFile.writeAsBytes(byteData.buffer.asUint8List());
       return coverFile.path;
@@ -208,7 +207,7 @@ class BackupRestoreService {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ScanResult {
-  final int added;   // new books inserted
+  final int added; // new books inserted
   final int updated; // existing books whose filePath was refreshed
 
   const ScanResult({required this.added, required this.updated});
