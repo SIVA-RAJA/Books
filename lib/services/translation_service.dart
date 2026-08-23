@@ -17,10 +17,13 @@ class TranslationService {
     return await _modelManager.isModelDownloaded(TranslateLanguage.tamil.bcpCode);
   }
 
-  /// Downloads the Tamil translation model.
-  /// Throws an exception if it fails (e.g., no internet).
+  /// Downloads the Tamil translation model over Mobile Data or Wi-Fi.
+  /// Throws an exception if it fails (e.g., no internet connection).
   Future<void> downloadModel() async {
-    final success = await _modelManager.downloadModel(TranslateLanguage.tamil.bcpCode);
+    final success = await _modelManager.downloadModel(
+      TranslateLanguage.tamil.bcpCode,
+      isWifiRequired: false,
+    );
     if (!success) {
       throw Exception('Failed to download Tamil translation model.');
     }

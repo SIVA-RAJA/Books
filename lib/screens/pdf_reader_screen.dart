@@ -1,20 +1,42 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
-import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import '../models/book_model.dart';
 import '../database/db_helper.dart';
+import '../services/url_launcher_service.dart';
 import '../widgets/translation_bottom_sheet.dart';
 import '../main.dart' show AppColors;
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Books PDF Reader
-//  • UI like EPUB: dark canvas, cream text, serif font, immersive full-screen
-//  • Scrolls continuously like a PDF (one long vertical scroll)
-//  • Detects the visible page via ItemPositionsListener → saves to DB immediately
-//  • Back button (‹) always pops back to the BookDetailScreen
-//  • Font-size controls (A− /A+)
-//  • Jump-to-page dialog
+//  Books PDF Reader Screen — Dark Theme Native PDF Reader
+//  • Preserves 100% exact alignment, fonts, styles, math formulas, tables & images
+//  • Applies smart Dark Mode color filter matrix (Black BG, crisp white/cream text)
+//  • Features multiple reading themes: Vanta Dark, High Contrast, Warm Dark, Light
+//  • Page-Flip (Horizontal), Dual Page Spread & Vertical Continuous layouts
+//  • In-App Text Selection Translator, Copy, & Google Chrome Search toolbar
 // ─────────────────────────────────────────────────────────────────────────────
+
+enum PdfReadingTheme {
+  vantaDark('Vanta Dark', Icons.dark_mode_rounded),
+  highContrast('High Contrast', Icons.contrast_rounded),
+  warmDark('Warm Night', Icons.nightlight_round),
+  light('Original Light', Icons.light_mode_rounded);
+
+  final String label;
+  final IconData icon;
+  const PdfReadingTheme(this.label, this.icon);
+}
+
+enum PdfLayoutMode {
+  vertical('Vertical Continuous', Icons.unfold_more_rounded),
+  horizontal('Page Flip (Horizontal)', Icons.swipe_rounded),
+  dualPageSpread('Dual Page Spread', Icons.menu_book_rounded);
+
+  final String label;
+  final IconData icon;
+  const PdfLayoutMode(this.label, this.icon);
+}
 
 class PdfReaderScreen extends StatefulWidget {
   final Book book;
@@ -26,34 +48,66 @@ class PdfReaderScreen extends StatefulWidget {
 
 class _PdfReaderScreenState extends State<PdfReaderScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  // ── PDF document ──────────────────────────────────────────────
-  PdfDocument? _document;
+  // ── PDF Controller & State ─────────────────────────────────────
+  late final PdfViewerController _pdfController;
   bool _isLoading = true;
   String? _loadError;
 
-  // ── Page state ────────────────────────────────────────────────
+  // ── Page & Layout State ───────────────────────────────────────
   int _currentPage = 1;
   int _totalPages = 0;
-
-  // ── Scroll ────────────────────────────────────────────────────
-  final ItemScrollController _itemScrollController = ItemScrollController();
-  final ItemPositionsListener _itemPositionsListener = ItemPositionsListener.create();
-
-  // ── UI ────────────────────────────────────────────────────────
-  bool _showControls = true;
-  double _fontSize = 12.0;
-  late AnimationController _controlsAnim;
-
-  // Reading theme
-  static const _bgColor    = Colors.black; // Pure vanta black
-  static const _textColor  = Color(0xFFE8E4D9);
-  static const _lineHeight = 1.78;
-
-  // Debounce: last page we actually wrote to DB
   int _lastSavedPage = 0;
+  PdfLayoutMode _layoutMode = PdfLayoutMode.vertical;
 
-  // ── Stats Tracking ────────────────────────────────────────────
+  // ── Text Selection State ──────────────────────────────────────
+  String? _selectedText;
+  bool _showSelectionToolbar = false;
+
+  // ── UI Controls ───────────────────────────────────────────────
+  bool _showControls = true;
+  late AnimationController _controlsAnim;
+  PdfReadingTheme _currentTheme = PdfReadingTheme.vantaDark;
+
+  // ── Reading Session Stats ─────────────────────────────────────
   DateTime _sessionStart = DateTime.now();
+
+  // ── Color Filter Matrices ─────────────────────────────────────
+  // Vanta Dark: Inverts white page background to black, text to bright white
+  static const ColorFilter _vantaDarkFilter = ColorFilter.matrix(<double>[
+    -1.0,  0.0,  0.0, 0.0, 255.0,
+     0.0, -1.0,  0.0, 0.0, 255.0,
+     0.0,  0.0, -1.0, 0.0, 255.0,
+     0.0,  0.0,  0.0, 1.0,   0.0,
+  ]);
+
+  // High Contrast: Enhanced contrast inversion (boosts text white, crushes bg black)
+  static const ColorFilter _highContrastFilter = ColorFilter.matrix(<double>[
+    -1.2,  0.0,  0.0, 0.0, 260.0,
+     0.0, -1.2,  0.0, 0.0, 260.0,
+     0.0,  0.0, -1.2, 0.0, 260.0,
+     0.0,  0.0,  0.0, 1.0,   0.0,
+  ]);
+
+  // Warm Dark: Inverts background to dark charcoal, text to warm amber cream
+  static const ColorFilter _warmDarkFilter = ColorFilter.matrix(<double>[
+    -0.85, 0.0,   0.0,  0.0, 230.0,
+     0.0, -0.80,  0.0,  0.0, 215.0,
+     0.0,  0.0,  -0.65, 0.0, 175.0,
+     0.0,  0.0,   0.0,  1.0,   0.0,
+  ]);
+
+  ColorFilter? _getThemeFilter(PdfReadingTheme theme) {
+    switch (theme) {
+      case PdfReadingTheme.vantaDark:
+        return _vantaDarkFilter;
+      case PdfReadingTheme.highContrast:
+        return _highContrastFilter;
+      case PdfReadingTheme.warmDark:
+        return _warmDarkFilter;
+      case PdfReadingTheme.light:
+        return null;
+    }
+  }
 
   @override
   void initState() {
@@ -61,7 +115,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     WidgetsBinding.instance.addObserver(this);
     _sessionStart = DateTime.now();
 
-    _currentPage  = widget.book.currentPage > 0 ? widget.book.currentPage : 1;
+    _pdfController = PdfViewerController();
+    _currentPage = widget.book.currentPage > 0 ? widget.book.currentPage : 1;
     _lastSavedPage = _currentPage;
 
     _controlsAnim = AnimationController(
@@ -69,23 +124,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       duration: const Duration(milliseconds: 200),
       value: 1.0,
     );
-
-
-    _loadDocument();
-
-    // Listen to scroll → update current page + save immediately
-    _itemPositionsListener.itemPositions.addListener(_onScroll);
   }
 
   @override
   void dispose() {
     _recordReadingTime();
     WidgetsBinding.instance.removeObserver(this);
-    _saveProgress(_currentPage); // always save on exit
-    _itemPositionsListener.itemPositions.removeListener(_onScroll);
+    _saveProgress(_currentPage);
     _controlsAnim.dispose();
-    _document?.dispose();
-
     super.dispose();
   }
 
@@ -104,70 +150,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     if (seconds > 0) {
       DBHelper.instance.addReadingTime(seconds);
     }
-    _sessionStart = now; // reset
+    _sessionStart = now;
   }
 
-  // ── Load PDF ──────────────────────────────────────────────────
-
-  Future<void> _loadDocument() async {
-    try {
-      final doc = await PdfDocument.openFile(widget.book.filePath);
-      if (!mounted) return;
-
-      setState(() {
-        _document   = doc;
-        _totalPages = doc.pages.length;
-        _isLoading  = false;
-      });
-
-      // Jump to saved page after first frame renders
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _jumpToPage(_currentPage, animate: false);
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loadError = e.toString();
-        _isLoading  = false;
-      });
-    }
-  }
-
-  // ── Scroll listener → instant page detection ──────────────────
-
-  void _onScroll() {
-    if (_totalPages == 0) return;
-
-    final positions = _itemPositionsListener.itemPositions.value;
-    if (positions.isEmpty) return;
-
-    int? bestPage;
-
-    for (final pos in positions) {
-      if (pos.itemLeadingEdge <= 0.5 && pos.itemTrailingEdge > 0.5) {
-        bestPage = pos.index + 1; // index is 0-based
-        break;
-      }
-    }
-
-    if (bestPage == null) {
-      double minEdge = double.infinity;
-      for (final pos in positions) {
-        final dist = (pos.itemLeadingEdge - 0.5).abs();
-        if (dist < minEdge) {
-          minEdge = dist;
-          bestPage = pos.index + 1;
-        }
-      }
-    }
-
-    if (bestPage != null && bestPage != _currentPage) {
-      setState(() => _currentPage = bestPage!);
-      _saveProgress(bestPage);
-    }
-  }
-
-  // ── Save progress ─────────────────────────────────────────────
+  // ── Database Progress Sync ────────────────────────────────────
 
   Future<void> _saveProgress(int page) async {
     if (_totalPages == 0 || page == _lastSavedPage) return;
@@ -179,32 +165,16 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     );
   }
 
-  // ── Jump to page ──────────────────────────────────────────────
+  // ── Jump to Page ──────────────────────────────────────────────
 
-  void _jumpToPage(int page, {bool animate = true}) {
+  void _jumpToPage(int page) {
     if (page < 1 || page > _totalPages) return;
-
-    final isShortJump = (_currentPage - page).abs() <= 3;
-
-    if (animate && isShortJump) {
-      _itemScrollController.scrollTo(
-        index: page - 1,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-        alignment: 0.1, // Gives a little top padding
-      );
-    } else {
-      _itemScrollController.jumpTo(
-        index: page - 1,
-        alignment: 0.1,
-      );
-    }
-
+    _pdfController.goToPage(pageNumber: page);
     setState(() => _currentPage = page);
     _saveProgress(page);
   }
 
-  // ── Toggle overlay controls ───────────────────────────────────
+  // ── Toggle Controls Overlay ───────────────────────────────────
 
   void _toggleControls() {
     setState(() => _showControls = !_showControls);
@@ -215,7 +185,135 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     }
   }
 
-  // ── Go-to-page dialog ─────────────────────────────────────────
+  // ── Theme Selector Dialog ─────────────────────────────────────
+
+  void _showThemeSelector() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setBottomSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Text(
+                    'Reading Theme',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ...PdfReadingTheme.values.map((theme) {
+                  final isSelected = theme == _currentTheme;
+                  return ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    leading: Icon(
+                      theme.icon,
+                      color: isSelected ? AppColors.primary : AppColors.textSecondary,
+                    ),
+                    title: Text(
+                      theme.label,
+                      style: TextStyle(
+                        color: isSelected ? AppColors.primary : AppColors.textPrimary,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    trailing: isSelected
+                        ? const Icon(Icons.check_circle_rounded, color: AppColors.primary)
+                        : null,
+                    onTap: () {
+                      setState(() => _currentTheme = theme);
+                      setBottomSheetState(() {});
+                      Navigator.pop(context);
+                    },
+                  );
+                }),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Layout Mode Selector ──────────────────────────────────────
+
+  void _showLayoutSelector() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setBottomSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Text(
+                    'Page Layout Mode',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...PdfLayoutMode.values.map((mode) {
+                  final isSelected = _layoutMode == mode;
+                  return ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    leading: Icon(
+                      mode.icon,
+                      color: isSelected ? AppColors.primary : AppColors.textSecondary,
+                    ),
+                    title: Text(
+                      mode.label,
+                      style: TextStyle(
+                        color: isSelected ? AppColors.primary : AppColors.textPrimary,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    trailing: isSelected
+                        ? const Icon(Icons.check_circle_rounded, color: AppColors.primary)
+                        : null,
+                    onTap: () {
+                      setState(() => _layoutMode = mode);
+                      setBottomSheetState(() {});
+                      Navigator.pop(context);
+                    },
+                  );
+                }),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Jump to Page Dialog ───────────────────────────────────────
 
   void _showGoToPageDialog() {
     final ctrl = TextEditingController();
@@ -234,7 +332,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             hintText: '1 – $_totalPages',
             hintStyle: const TextStyle(color: AppColors.textMuted),
           ),
-          autofocus: false,
+          autofocus: true,
         ),
         actions: [
           TextButton(
@@ -256,291 +354,494 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     );
   }
 
-  // ── Build ─────────────────────────────────────────────────────
+  // ── Main Build ────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
+    final filter = _getThemeFilter(_currentTheme);
+
     return Scaffold(
-      backgroundColor: _bgColor,
-      resizeToAvoidBottomInset: false, // Prevents layout lag when opening keyboard
-      body: _isLoading
-          ? _buildLoader()
-          : _loadError != null
-              ? _buildError()
-              : _buildReader(),
-    );
-  }
-
-  Widget _buildLoader() {
-    return const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      backgroundColor: Colors.black,
+      resizeToAvoidBottomInset: false,
+      body: Stack(
         children: [
-          CircularProgressIndicator(color: AppColors.primary),
-          SizedBox(height: 16),
-          Text('Loading book…',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 14)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildError() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.broken_image_outlined,
-                size: 56, color: AppColors.red),
-            const SizedBox(height: 16),
-            const Text('Could not open this book',
-                style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(_loadError ?? '',
-                style: const TextStyle(
-                    color: AppColors.textMuted, fontSize: 12),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back_rounded),
-              label: const Text('Go Back'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReader() {
-    return Stack(
-      children: [
-        // ── Continuous scroll content ─────────────────────────────
-        GestureDetector(
-          onTap: _toggleControls,
-          child: ScrollablePositionedList.builder(
-            itemCount: _totalPages,
-            itemScrollController: _itemScrollController,
-            itemPositionsListener: _itemPositionsListener,
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.only(top: 56, bottom: 80),
-            itemBuilder: (context, index) {
-              return _buildPage(index + 1);
+          // ── Native PDF Document Viewer with Color Filter Transformation ──
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () {
+              if (!_showSelectionToolbar) {
+                _toggleControls();
+              }
             },
+            child: RepaintBoundary(
+              child: filter != null
+                  ? ColorFiltered(
+                      colorFilter: filter,
+                      child: _buildPdfViewer(),
+                    )
+                  : _buildPdfViewer(),
+            ),
           ),
-        ),
 
-        // ── Top bar ───────────────────────────────────────────────
-        AnimatedSlide(
-          offset: _showControls ? Offset.zero : const Offset(0, -1),
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeInOut,
-          child: _buildTopBar(),
-        ),
+          // ── Text Selection Floating Action Toolbar ────────────────
+          if (_showSelectionToolbar && _selectedText != null)
+            _buildSelectionToolbar(),
 
-        // ── Bottom bar ────────────────────────────────────────────
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          child: AnimatedSlide(
-            offset: _showControls ? Offset.zero : const Offset(0, 1),
+          // ── Loading Overlay ───────────────────────────────────────
+          if (_isLoading)
+            Container(
+              color: Colors.black,
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: AppColors.primary),
+                    SizedBox(height: 16),
+                    Text(
+                      'Rendering book with exact layout…',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // ── Load Error View ───────────────────────────────────────
+          if (_loadError != null) _buildErrorView(),
+
+          // ── Top Bar Overlay ───────────────────────────────────────
+          AnimatedSlide(
+            offset: _showControls ? Offset.zero : const Offset(0, -1),
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeInOut,
-            child: _buildBottomBar(),
+            child: _buildTopBar(),
           ),
-        ),
-      ],
-    );
-  }
 
-  // ── Single page widget ────────────────────────────────────────
-
-  Widget _buildPage(int pageNum) {
-    return _PdfPageWidget(
-      pageNum: pageNum,
-      document: _document,
-      buildTextPage: _buildTextPage,
-      buildImagePage: _buildImagePage,
-      shimmer: _buildPageShimmer(),
-    );
-  }
-
-  // ── EPUB-style text page ──────────────────────────────────────
-
-  Widget _buildTextPage(int pageNum, String text) {
-    return Container(
-      color: _bgColor,
-      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (pageNum > 1) ...[
-            Container(
-              height: 1,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    AppColors.primary.withValues(alpha: 0.3),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
-
-          Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: AppColors.primary.withValues(alpha: 0.2)),
-              ),
-              child: Text(
-                'Page $pageNum',
-                style: const TextStyle(
-                  color: AppColors.primary,
-                  fontSize: 9,
-                  letterSpacing: 1.0,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+          // ── Bottom Navigation & Slider Overlay ────────────────────
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: AnimatedSlide(
+              offset: _showControls ? Offset.zero : const Offset(0, 1),
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeInOut,
+              child: _buildBottomBar(),
             ),
           ),
-          const SizedBox(height: 20),
-
-          SelectableText(
-            text,
-            style: TextStyle(
-              color: _textColor,
-              fontSize: _fontSize,
-              height: _lineHeight,
-              fontFamily: 'Georgia',
-              letterSpacing: 0.25,
-            ),
-            contextMenuBuilder: (context, editableTextState) {
-              final List<ContextMenuButtonItem> buttonItems = [];
-              // Keep only the default 'Copy' button to avoid clutter
-              for (final item in editableTextState.contextMenuButtonItems) {
-                if (item.type == ContextMenuButtonType.copy) {
-                  buttonItems.add(item);
-                  break;
-                }
-              }
-              
-              buttonItems.add(ContextMenuButtonItem(
-                label: 'Translate to Tamil',
-                onPressed: () {
-                  ContextMenuController.removeAny();
-                  final selectedText = editableTextState.textEditingValue.selection.textInside(editableTextState.textEditingValue.text);
-                  if (selectedText.isNotEmpty) {
-                    TranslationBottomSheet.show(context, selectedText);
-                  }
-                },
-              ));
-              
-              return AdaptiveTextSelectionToolbar.buttonItems(
-                anchors: editableTextState.contextMenuAnchors,
-                buttonItems: buttonItems,
-              );
-            },
-          ),
-          const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  // ── Image fallback page ────────────────────────────────────────
+  // ── Page Layout Calculator ───────────────────────────────────
 
-  Widget _buildImagePage(int pageNum) {
-    if (_document == null) return const SizedBox.shrink();
-    return Container(
-      color: _bgColor,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-      child: Column(
-        children: [
-          if (pageNum > 1)
-            Container(
-              height: 1,
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    AppColors.primary.withValues(alpha: 0.3),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-          Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: AppColors.primary.withValues(alpha: 0.2)),
-              ),
-              child: Text(
-                'Page $pageNum',
-                style: const TextStyle(
-                  color: AppColors.primary,
-                  fontSize: 9,
-                  letterSpacing: 1.0,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: PdfPageView(
-              document: _document!,
-              pageNumber: pageNum,
-              alignment: Alignment.topCenter,
-            ),
-          ),
-          const SizedBox(height: 24),
-        ],
-      ),
-    );
-  }
+  PdfPageLayout _calculatePageLayout(List<PdfPage> pages, PdfViewerParams params) {
+    final margin = params.margin;
 
-  // ── Shimmer placeholder ───────────────────────────────────────
-
-  Widget _buildPageShimmer() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 40),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: List.generate(10, (i) {
-          return Container(
-            height: 14,
-            margin: const EdgeInsets.only(bottom: 12),
-            width: i % 5 == 4 ? 180 : double.infinity,
-            decoration: BoxDecoration(
-              color: AppColors.surface3,
-              borderRadius: BorderRadius.circular(4),
+    switch (_layoutMode) {
+      case PdfLayoutMode.horizontal:
+        final height = pages.fold(0.0, (prev, page) => max(prev, page.height)) + margin * 2;
+        final pageLayouts = <Rect>[];
+        double x = margin;
+        for (final page in pages) {
+          pageLayouts.add(
+            Rect.fromLTWH(
+              x,
+              (height - page.height) / 2,
+              page.width,
+              page.height,
             ),
           );
-        }),
+          x += page.width + margin;
+        }
+        return PdfPageLayout(pageLayouts: pageLayouts, documentSize: Size(x, height));
+
+      case PdfLayoutMode.dualPageSpread:
+        final pageLayouts = <Rect>[];
+        double y = margin;
+        double maxWidth = 0.0;
+
+        for (int i = 0; i < pages.length; i += 2) {
+          final page1 = pages[i];
+          final page2 = (i + 1 < pages.length) ? pages[i + 1] : null;
+
+          final rowHeight = max(page1.height, page2?.height ?? 0.0);
+          final rowWidth = page1.width + (page2 != null ? page2.width + margin : 0.0);
+          if (rowWidth + margin * 2 > maxWidth) {
+            maxWidth = rowWidth + margin * 2;
+          }
+
+          pageLayouts.add(
+            Rect.fromLTWH(margin, y + (rowHeight - page1.height) / 2, page1.width, page1.height),
+          );
+
+          if (page2 != null) {
+            pageLayouts.add(
+              Rect.fromLTWH(
+                margin + page1.width + margin,
+                y + (rowHeight - page2.height) / 2,
+                page2.width,
+                page2.height,
+              ),
+            );
+          }
+
+          y += rowHeight + margin;
+        }
+        return PdfPageLayout(pageLayouts: pageLayouts, documentSize: Size(maxWidth, y));
+
+      case PdfLayoutMode.vertical:
+        final width = pages.fold(0.0, (prev, page) => max(prev, page.width)) + margin * 2;
+        final pageLayouts = <Rect>[];
+        double y = margin;
+        for (final page in pages) {
+          pageLayouts.add(
+            Rect.fromLTWH(
+              (width - page.width) / 2,
+              y,
+              page.width,
+              page.height,
+            ),
+          );
+          y += page.height + margin;
+        }
+        return PdfPageLayout(pageLayouts: pageLayouts, documentSize: Size(width, y));
+    }
+  }
+
+  // ── PDF Viewer Widget ─────────────────────────────────────────
+
+  Widget _buildPdfViewer() {
+    return PdfViewer.file(
+      widget.book.filePath,
+      controller: _pdfController,
+      params: PdfViewerParams(
+        maxScale: 4.0,
+        minScale: 1.0,
+        layoutPages: _calculatePageLayout,
+        perPageSelectableRegionInjector: (context, child, page, pageRect) {
+          return SelectionArea(
+            contextMenuBuilder: (context, selectableRegionState) {
+              final text = _selectedText ?? '';
+              return AdaptiveTextSelectionToolbar.buttonItems(
+                anchors: selectableRegionState.contextMenuAnchors,
+                buttonItems: [
+                  ContextMenuButtonItem(
+                    label: 'Translate (Tamil)',
+                    onPressed: () {
+                      selectableRegionState.hideToolbar();
+                      if (text.trim().isNotEmpty) {
+                        TranslationBottomSheet.show(this.context, text);
+                      }
+                    },
+                  ),
+                  ContextMenuButtonItem(
+                    label: 'Copy',
+                    onPressed: () {
+                      selectableRegionState.hideToolbar();
+                      if (text.trim().isNotEmpty) {
+                        Clipboard.setData(ClipboardData(text: text));
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Text copied to clipboard'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                  ContextMenuButtonItem(
+                    label: 'Search Chrome',
+                    onPressed: () {
+                      selectableRegionState.hideToolbar();
+                      if (text.trim().isNotEmpty) {
+                        UrlLauncherService.openInChrome(
+                          'https://www.google.com/search?q=${Uri.encodeComponent(text)}',
+                        );
+                      }
+                    },
+                  ),
+                ],
+              );
+            },
+            child: child,
+          );
+        },
+        onTextSelectionChange: (selections) {
+          if (selections.any((s) => s.isNotEmpty)) {
+            final text = selections
+                .where((s) => s.isNotEmpty)
+                .map((s) => s.text)
+                .join(' ')
+                .trim();
+            if (text.isNotEmpty && mounted) {
+              setState(() {
+                _selectedText = text;
+                _showSelectionToolbar = true;
+              });
+            }
+          }
+        },
+        onPageChanged: (pageNumber) {
+          if (pageNumber != null && pageNumber != _currentPage) {
+            setState(() => _currentPage = pageNumber);
+            Future.microtask(() => _saveProgress(pageNumber));
+          }
+        },
+        onViewerReady: (document, controller) {
+          if (!mounted) return;
+          setState(() {
+            _totalPages = document.pages.length;
+            _isLoading = false;
+          });
+          if (_currentPage > 1) {
+            controller.goToPage(pageNumber: _currentPage);
+          }
+        },
       ),
     );
   }
 
-  // ── Top bar ───────────────────────────────────────────────────
+  // ── Selection Action Toolbar Widget (Pure Black & White) ──────
+
+  Widget _buildSelectionToolbar() {
+    return Positioned(
+      bottom: 96,
+      left: 16,
+      right: 16,
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF000000), // Pure Black
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white30, width: 1.5), // Pure White Border
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.9),
+                blurRadius: 20,
+                spreadRadius: 2,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Selected text preview bar (Monochrome)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  color: const Color(0xFF141414), // Dark Grey-Black
+                  child: Row(
+                    children: [
+                      const Icon(Icons.format_quote_rounded, size: 16, color: Colors.white70),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _selectedText ?? '',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () {
+                          HapticFeedback.lightImpact();
+                          setState(() {
+                            _showSelectionToolbar = false;
+                            _selectedText = null;
+                          });
+                        },
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(Icons.close_rounded, color: Colors.white60, size: 18),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Action buttons row with large touch targets (Monochrome Pure Black & White)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      // Translate Button (Monochrome White Card)
+                      Expanded(
+                        child: InkWell(
+                          onTap: () {
+                            HapticFeedback.mediumImpact();
+                            final text = _selectedText;
+                            if (text != null && text.trim().isNotEmpty) {
+                              TranslationBottomSheet.show(context, text);
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1F1F1F),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white54, width: 1),
+                            ),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.g_translate_rounded, color: Colors.white, size: 18),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Translate',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+
+                      // Copy Button (Monochrome White Card)
+                      Expanded(
+                        child: InkWell(
+                          onTap: () {
+                            HapticFeedback.lightImpact();
+                            if (_selectedText != null) {
+                              Clipboard.setData(ClipboardData(text: _selectedText!));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Text copied to clipboard'),
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF141414),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white24, width: 1),
+                            ),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.copy_rounded, color: Colors.white70, size: 18),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Copy',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+
+                      // Chrome Search Button (Monochrome White Card)
+                      Expanded(
+                        child: InkWell(
+                          onTap: () {
+                            HapticFeedback.lightImpact();
+                            if (_selectedText != null) {
+                              UrlLauncherService.openInChrome(
+                                'https://www.google.com/search?q=${Uri.encodeComponent(_selectedText!)}',
+                              );
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF141414),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white24, width: 1),
+                            ),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.open_in_browser_rounded, color: Colors.white70, size: 18),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Chrome',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Error View Widget ─────────────────────────────────────────
+
+  Widget _buildErrorView() {
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.broken_image_outlined,
+                  size: 56, color: AppColors.red),
+              const SizedBox(height: 16),
+              const Text('Could not open PDF file',
+                  style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(_loadError ?? '',
+                  style: const TextStyle(
+                      color: AppColors.textMuted, fontSize: 12),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: const Text('Go Back'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Top Bar Widget ────────────────────────────────────────────
 
   Widget _buildTopBar() {
     return Container(
@@ -549,7 +850,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.black.withValues(alpha: 0.92),
+            Colors.black.withValues(alpha: 0.94),
             Colors.transparent,
           ],
           stops: const [0.65, 1.0],
@@ -590,18 +891,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.text_decrease_rounded,
-                    color: Colors.white70, size: 18),
-                tooltip: 'Decrease font',
-                onPressed: () => setState(
-                    () => _fontSize = (_fontSize - 1).clamp(12.0, 28.0)),
+                icon: Icon(_layoutMode.icon, color: Colors.white70, size: 20),
+                tooltip: 'Page Layout Mode (${_layoutMode.label})',
+                onPressed: _showLayoutSelector,
               ),
               IconButton(
-                icon: const Icon(Icons.text_increase_rounded,
-                    color: Colors.white70, size: 18),
-                tooltip: 'Increase font',
-                onPressed: () => setState(
-                    () => _fontSize = (_fontSize + 1).clamp(12.0, 28.0)),
+                icon: Icon(_currentTheme.icon, color: Colors.white70, size: 20),
+                tooltip: 'Change Reading Theme (${_currentTheme.label})',
+                onPressed: _showThemeSelector,
               ),
               IconButton(
                 icon: const Icon(Icons.find_in_page_outlined,
@@ -616,7 +913,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     );
   }
 
-  // ── Bottom bar ────────────────────────────────────────────────
+  // ── Bottom Bar Widget ─────────────────────────────────────────
 
   Widget _buildBottomBar() {
     final progress = _totalPages > 0 ? _currentPage / _totalPages : 0.0;
@@ -626,7 +923,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
           colors: [
-            Colors.black.withValues(alpha: 0.92),
+            Colors.black.withValues(alpha: 0.94),
             Colors.transparent,
           ],
           stops: const [0.6, 1.0],
@@ -659,7 +956,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     setState(() => _currentPage = p);
                   }
                 },
-                onChangeEnd: (v) => _jumpToPage(v.round(), animate: false),
+                onChangeEnd: (v) => _jumpToPage(v.round()),
               ),
             ),
             const SizedBox(height: 4),
@@ -721,88 +1018,5 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         ),
       ),
     );
-  }
-}
-
-// ── KeepAlive Page Wrapper ───────────────────────────────────────────────────
-
-class _PdfPageWidget extends StatefulWidget {
-  final int pageNum;
-  final PdfDocument? document;
-  final Widget Function(int, String) buildTextPage;
-  final Widget Function(int) buildImagePage;
-  final Widget shimmer;
-
-  const _PdfPageWidget({
-    required this.pageNum,
-    required this.document,
-    required this.buildTextPage,
-    required this.buildImagePage,
-    required this.shimmer,
-  });
-
-  @override
-  State<_PdfPageWidget> createState() => _PdfPageWidgetState();
-}
-
-class _PdfPageWidgetState extends State<_PdfPageWidget>
-    with AutomaticKeepAliveClientMixin {
-  String? _text;
-  bool _isLoading = true;
-
-  @override
-  bool get wantKeepAlive => true; // Prevents the list from destroying this page!
-
-  @override
-  void initState() {
-    super.initState();
-    _extractText();
-  }
-
-  Future<void> _extractText() async {
-    if (widget.document == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
-    try {
-      final blocks = await widget.document!.pages[widget.pageNum - 1].loadText();
-      final buf = StringBuffer();
-      String prev = '';
-      for (final frag in blocks.fragments) {
-        final t = frag.text.trim();
-        if (t.isEmpty) continue;
-        if (prev.endsWith('.') || prev.endsWith('?') || prev.endsWith('!')) {
-          buf.write('\n\n');
-        } else if (buf.isNotEmpty) {
-          buf.write(' ');
-        }
-        buf.write(t);
-        prev = t;
-      }
-      if (mounted) {
-        setState(() {
-          _text = buf.toString().trim();
-          _isLoading = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _text = '';
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
-    if (_isLoading) return widget.shimmer;
-    if (_text != null && _text!.isNotEmpty) {
-      return widget.buildTextPage(widget.pageNum, _text!);
-    } else {
-      return widget.buildImagePage(widget.pageNum);
-    }
   }
 }
