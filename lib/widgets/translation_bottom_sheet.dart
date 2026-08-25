@@ -40,7 +40,11 @@ class _TranslationBottomSheetState extends State<TranslationBottomSheet> {
   @override
   void initState() {
     super.initState();
-    _checkModelAndTranslate();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _checkModelAndTranslate();
+      }
+    });
   }
 
   @override
@@ -160,134 +164,185 @@ class _TranslationBottomSheetState extends State<TranslationBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).padding.bottom + 20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Handle bar
-          Center(
-            child: Container(
-              width: 36,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                color: AppColors.borderBright,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
+    final maxHeight = MediaQuery.of(context).size.height * 0.85;
 
-          // Original text header
-          const Row(
+    return Container(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            16,
+            20,
+            MediaQuery.of(context).padding.bottom + 16,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Icon(Icons.language_rounded, color: AppColors.textMuted, size: 18),
-              SizedBox(width: 8),
-              Text('English', style: TextStyle(color: AppColors.textMuted, fontSize: 12, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.bg,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Text(
-              widget.originalText,
-              style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, height: 1.5),
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-
-          const SizedBox(height: 16),
-          const Divider(color: AppColors.border),
-          const SizedBox(height: 16),
-
-          // Translation section
-          const Row(
-            children: [
-              Icon(Icons.g_translate_rounded, color: AppColors.primary, size: 18),
-              SizedBox(width: 8),
-              Text('Tamil', style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          if (_errorMsg != null)
-            Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
-                    color: AppColors.red.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.red.withValues(alpha: 0.3)),
+                    color: AppColors.borderBright,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  child: Row(
+                ),
+              ),
+
+              // Scrollable Content Area (Guarantees zero overflow!)
+              Flexible(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Icon(Icons.error_outline_rounded, color: AppColors.red, size: 20),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          _errorMsg!,
-                          style: const TextStyle(color: AppColors.red, fontSize: 13),
+                      // Original text header
+                      Row(
+                        children: [
+                          const Icon(Icons.language_rounded, color: AppColors.textMuted, size: 18),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'English (Original)',
+                            style: TextStyle(color: AppColors.textMuted, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${widget.originalText.trim().split(RegExp(r'\s+')).length} words',
+                            style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+
+                      // ── Top Box (Original English Text) — Smooth Independent Scroll ──
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 140),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.bg,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: Scrollbar(
+                          thumbVisibility: true,
+                          child: SingleChildScrollView(
+                            physics: const BouncingScrollPhysics(),
+                            child: SelectableText(
+                              widget.originalText,
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 14,
+                                height: 1.5,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
+
+                      const SizedBox(height: 16),
+                      const Divider(color: AppColors.border),
+                      const SizedBox(height: 16),
+
+                      // Translation section header
+                      const Row(
+                        children: [
+                          Icon(Icons.g_translate_rounded, color: AppColors.primary, size: 18),
+                          SizedBox(width: 8),
+                          Text(
+                            'Tamil (Translation)',
+                            style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      if (_errorMsg != null)
+                        Column(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: AppColors.red.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: AppColors.red.withValues(alpha: 0.3)),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.error_outline_rounded, color: AppColors.red, size: 20),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      _errorMsg!,
+                                      style: const TextStyle(color: AppColors.red, fontSize: 13),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                UrlLauncherService.openGoogleTranslateInChrome(widget.originalText);
+                              },
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.primary,
+                                side: const BorderSide(color: AppColors.primary),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              icon: const Icon(Icons.open_in_browser_rounded, size: 18),
+                              label: const Text('Open in Google Chrome'),
+                            ),
+                          ],
+                        )
+                      else if (!_isModelDownloaded)
+                        _buildDownloadState()
+                      else if (_isTranslating || _translatedText == null)
+                        const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24.0),
+                            child: CircularProgressIndicator(color: AppColors.primary),
+                          ),
+                        )
+                      else
+                        // ── Bottom Box (Translated Tamil Text) — Smooth Independent Scroll ──
+                        Container(
+                          constraints: const BoxConstraints(maxHeight: 260),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: AppColors.bg,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Scrollbar(
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              physics: const BouncingScrollPhysics(),
+                              child: SelectableText(
+                                _translatedText!,
+                                style: const TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 16,
+                                  height: 1.6,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    UrlLauncherService.openGoogleTranslateInChrome(widget.originalText);
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    side: const BorderSide(color: AppColors.primary),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  icon: const Icon(Icons.open_in_browser_rounded, size: 18),
-                  label: const Text('Open in Google Chrome'),
-                ),
-              ],
-            )
-          else if (!_isModelDownloaded)
-            _buildDownloadState()
-          else if (_isTranslating || _translatedText == null)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24.0),
-                child: CircularProgressIndicator(color: AppColors.primary),
               ),
-            )
-          else
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [AppColors.primary.withValues(alpha: 0.1), AppColors.bg],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
-              ),
-              child: SelectableText(
-                _translatedText!,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 16,
-                  height: 1.6,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }

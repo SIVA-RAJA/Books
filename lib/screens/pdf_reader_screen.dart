@@ -30,8 +30,7 @@ enum PdfReadingTheme {
 
 enum PdfLayoutMode {
   vertical('Vertical Continuous', Icons.unfold_more_rounded),
-  horizontal('Page Flip (Horizontal)', Icons.swipe_rounded),
-  dualPageSpread('Dual Page Spread', Icons.menu_book_rounded);
+  pageTurn('Page Snap Turn', Icons.swipe_rounded);
 
   final String label;
   final IconData icon;
@@ -365,27 +364,57 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
-          // ── Native PDF Document Viewer with Color Filter Transformation ──
-          GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () {
-              if (!_showSelectionToolbar) {
-                _toggleControls();
-              }
-            },
-            child: RepaintBoundary(
-              child: filter != null
-                  ? ColorFiltered(
-                      colorFilter: filter,
-                      child: _buildPdfViewer(),
-                    )
-                  : _buildPdfViewer(),
-            ),
+          // ── Native PDF Document Viewer (Direct Pure Touch Gestures - 60fps & Accurate Selection) ──
+          RepaintBoundary(
+            child: filter != null
+                ? ColorFiltered(
+                    colorFilter: filter,
+                    child: _buildPdfViewer(),
+                  )
+                : _buildPdfViewer(),
           ),
 
-          // ── Text Selection Floating Action Toolbar ────────────────
+          // ── Text Selection Floating Action Toolbar (Pure Black & White) ──
           if (_showSelectionToolbar && _selectedText != null)
             _buildSelectionToolbar(),
+
+          // ── Floating Controls Menu Toggle Badge ───────────────────
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8,
+            right: 16,
+            child: AnimatedOpacity(
+              opacity: _showControls ? 0.0 : 1.0,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: _showControls,
+                child: Material(
+                  color: Colors.black87,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: const BorderSide(color: Colors.white24),
+                  ),
+                  child: InkWell(
+                    onTap: _toggleControls,
+                    borderRadius: BorderRadius.circular(20),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.tune_rounded, color: Colors.white, size: 16),
+                          SizedBox(width: 6),
+                          Text(
+                            'Menu',
+                            style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
 
           // ── Loading Overlay ───────────────────────────────────────
           if (_isLoading)
@@ -440,7 +469,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     final margin = params.margin;
 
     switch (_layoutMode) {
-      case PdfLayoutMode.horizontal:
+      case PdfLayoutMode.pageTurn:
         final height = pages.fold(0.0, (prev, page) => max(prev, page.height)) + margin * 2;
         final pageLayouts = <Rect>[];
         double x = margin;
@@ -456,40 +485,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           x += page.width + margin;
         }
         return PdfPageLayout(pageLayouts: pageLayouts, documentSize: Size(x, height));
-
-      case PdfLayoutMode.dualPageSpread:
-        final pageLayouts = <Rect>[];
-        double y = margin;
-        double maxWidth = 0.0;
-
-        for (int i = 0; i < pages.length; i += 2) {
-          final page1 = pages[i];
-          final page2 = (i + 1 < pages.length) ? pages[i + 1] : null;
-
-          final rowHeight = max(page1.height, page2?.height ?? 0.0);
-          final rowWidth = page1.width + (page2 != null ? page2.width + margin : 0.0);
-          if (rowWidth + margin * 2 > maxWidth) {
-            maxWidth = rowWidth + margin * 2;
-          }
-
-          pageLayouts.add(
-            Rect.fromLTWH(margin, y + (rowHeight - page1.height) / 2, page1.width, page1.height),
-          );
-
-          if (page2 != null) {
-            pageLayouts.add(
-              Rect.fromLTWH(
-                margin + page1.width + margin,
-                y + (rowHeight - page2.height) / 2,
-                page2.width,
-                page2.height,
-              ),
-            );
-          }
-
-          y += rowHeight + margin;
-        }
-        return PdfPageLayout(pageLayouts: pageLayouts, documentSize: Size(maxWidth, y));
 
       case PdfLayoutMode.vertical:
         final width = pages.fold(0.0, (prev, page) => max(prev, page.width)) + margin * 2;
@@ -517,31 +512,50 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       widget.book.filePath,
       controller: _pdfController,
       params: PdfViewerParams(
+        enableTextSelection: true,
         maxScale: 4.0,
         minScale: 1.0,
+        limitRenderingCache: false,
+        verticalCacheExtent: 3.0,
+        horizontalCacheExtent: 3.0,
+        maxImageBytesCachedOnMemory: 250 * 1024 * 1024,
+        panAxis: _layoutMode == PdfLayoutMode.vertical
+            ? PanAxis.vertical
+            : PanAxis.horizontal,
         layoutPages: _calculatePageLayout,
-        perPageSelectableRegionInjector: (context, child, page, pageRect) {
+        onInteractionEnd: (details) {
+          if (_layoutMode == PdfLayoutMode.pageTurn && _currentPage > 0) {
+            _pdfController.goToPage(
+              pageNumber: _currentPage,
+              duration: const Duration(milliseconds: 250),
+            );
+          }
+        },
+        selectableRegionInjector: (context, child) {
           return SelectionArea(
             contextMenuBuilder: (context, selectableRegionState) {
-              final text = _selectedText ?? '';
               return AdaptiveTextSelectionToolbar.buttonItems(
                 anchors: selectableRegionState.contextMenuAnchors,
                 buttonItems: [
                   ContextMenuButtonItem(
                     label: 'Translate (Tamil)',
                     onPressed: () {
+                      HapticFeedback.lightImpact();
                       selectableRegionState.hideToolbar();
-                      if (text.trim().isNotEmpty) {
-                        TranslationBottomSheet.show(this.context, text);
+                      final textToUse = (_selectedText ?? '').trim();
+                      if (textToUse.isNotEmpty) {
+                        TranslationBottomSheet.show(this.context, textToUse);
                       }
                     },
                   ),
                   ContextMenuButtonItem(
                     label: 'Copy',
                     onPressed: () {
+                      HapticFeedback.lightImpact();
                       selectableRegionState.hideToolbar();
-                      if (text.trim().isNotEmpty) {
-                        Clipboard.setData(ClipboardData(text: text));
+                      final textToUse = (_selectedText ?? '').trim();
+                      if (textToUse.isNotEmpty) {
+                        Clipboard.setData(ClipboardData(text: textToUse));
                         ScaffoldMessenger.of(this.context).showSnackBar(
                           const SnackBar(
                             content: Text('Text copied to clipboard'),
@@ -554,10 +568,12 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                   ContextMenuButtonItem(
                     label: 'Search Chrome',
                     onPressed: () {
+                      HapticFeedback.lightImpact();
                       selectableRegionState.hideToolbar();
-                      if (text.trim().isNotEmpty) {
+                      final textToUse = (_selectedText ?? '').trim();
+                      if (textToUse.isNotEmpty) {
                         UrlLauncherService.openInChrome(
-                          'https://www.google.com/search?q=${Uri.encodeComponent(text)}',
+                          'https://www.google.com/search?q=${Uri.encodeComponent(textToUse)}',
                         );
                       }
                     },
@@ -574,12 +590,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 .where((s) => s.isNotEmpty)
                 .map((s) => s.text)
                 .join(' ')
+                .replaceAll(RegExp(r'\s+'), ' ')
                 .trim();
             if (text.isNotEmpty && mounted) {
-              setState(() {
-                _selectedText = text;
-                _showSelectionToolbar = true;
-              });
+              _selectedText = text;
+              if (!_showSelectionToolbar) {
+                setState(() {
+                  _showSelectionToolbar = true;
+                });
+              }
             }
           }
         },
